@@ -1,0 +1,10 @@
+/target/
+**/*.rs.bk
+.gemini/
+.gemini
+.specify/
+.specify
+lazydocker/
+lazydocker
+podman_debug.json
+podman_parse_error.txt

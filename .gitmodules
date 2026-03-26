@@ -1,0 +1,3 @@
+[submodule "lazydocker"]
+	path = lazydocker
+	url = https://github.com/jesseduffield/lazydocker.git

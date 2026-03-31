@@ -12,17 +12,21 @@ impl EventHandler {
     pub fn new(tick_rate: u64) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         let _sender = sender.clone();
-        
+
         std::thread::spawn(move || {
             let tick_rate = Duration::from_millis(tick_rate);
             let mut last_tick = Instant::now();
             loop {
-                let timeout = tick_rate.checked_sub(last_tick.elapsed()).unwrap_or(Duration::from_millis(0));
-                
+                let timeout = tick_rate
+                    .checked_sub(last_tick.elapsed())
+                    .unwrap_or(Duration::from_millis(0));
+
                 if event::poll(timeout).expect("failed to poll new events") {
                     match event::read().expect("failed to read event") {
                         CrosstermEvent::Key(key) => {
-                            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                            if key.code == KeyCode::Char('c')
+                                && key.modifiers.contains(KeyModifiers::CONTROL)
+                            {
                                 let _ = _sender.send(Action::Quit);
                                 break;
                             } else {
@@ -35,15 +39,18 @@ impl EventHandler {
                         _ => {}
                     }
                 }
-                
+
                 if last_tick.elapsed() >= tick_rate {
                     let _ = _sender.send(Action::Tick);
                     last_tick = Instant::now();
                 }
             }
         });
-        
-        Self { _sender: sender, receiver }
+
+        Self {
+            _sender: sender,
+            receiver,
+        }
     }
 
     pub async fn next(&mut self) -> Option<Action> {

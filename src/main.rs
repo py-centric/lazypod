@@ -27,10 +27,10 @@ async fn main() -> Result<()> {
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
     stdout().execute(DisableMouseCapture)?;
-    
+
     if let Err(err) = res {
         println!("{:?}", err);
     }
-    
+
     Ok(())
 }

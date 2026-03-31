@@ -19,11 +19,34 @@ Lazypod is a modern, responsive Terminal User Interface (TUI) for container mana
 - **Docker** (Optional): Supported for viewing and managing Docker resources.
 - **Rust/Cargo**: Required to build the project from source (`cargo version >= 1.70` recommended).
 
+## Installation & Build
+
+### Build from Source
+To build the optimized release binary, ensure you have [Rust and Cargo](https://rustup.rs/) installed:
+
+```bash
+cargo build --release
+```
+
+The resulting binary will be located at `target/release/lazypod`.
+
+### Execution
+You can run the binary directly:
+- **Linux/macOS**: `./target/release/lazypod`
+- **Windows**: `.\target\release\lazypod.exe`
+
+### Cross-Compilation (Optional)
+Lazypod is built with `ratatui` and `crossterm`, making it cross-platform. To build for other architectures:
+- **Windows**: `cargo build --release --target x86_64-pc-windows-msvc`
+- **macOS (Intel)**: `cargo build --release --target x86_64-apple-darwin`
+- **macOS (Apple Silicon)**: `cargo build --release --target aarch64-apple-darwin`
+
 ## Usage
 Simply run:
 ```bash
 cargo run
 ```
+or use the optimized binary as shown above.
 
 ## License
 

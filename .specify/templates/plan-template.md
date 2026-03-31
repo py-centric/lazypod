@@ -31,7 +31,12 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+- [ ] I. Rust-Native Performance & Safety: MUST use Rust.
+- [ ] II. Podman-First TUI: MUST target Podman with a TUI interface.
+- [ ] III. High Testing Standards: MUST target at least 80% coverage.
+- [ ] IV. Clean & Reusable Architecture: MUST follow DRY and Rust design patterns.
+- [ ] V. Atomic & Conventional Git Discipline: MUST use atomic/conventional commits.
+- [ ] VI. Open-Source Compliance: MUST use OSI-compliant licenses.
 
 ## Project Structure
 

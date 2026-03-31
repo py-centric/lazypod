@@ -51,6 +51,8 @@ description: "Task list template for feature implementation"
 - [ ] T001 Create project structure per implementation plan
 - [ ] T002 Initialize [language] project with [framework] dependencies
 - [ ] T003 [P] Configure linting and formatting tools
+- [ ] T004 [P] Verify OSI compliance for all initial dependencies
+- [ ] T005 [P] Setup CI/CD pipeline for 80% coverage enforcement
 
 ---
 

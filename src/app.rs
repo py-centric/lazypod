@@ -56,6 +56,7 @@ pub struct ExecForm {
     pub command: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tab {
     Running,
     Stopped,
@@ -87,7 +88,7 @@ pub struct App {
     pub direct_pull_form: Option<DirectPullForm>,
     pub configure_registries_form: Option<ConfigureRegistriesForm>,
     pub exec_form: Option<ExecForm>,
-    pub pending_action: Option<(String, String, String)>, // (engine, id, action)
+    pub pending_action: Option<(Tab, String, String, String)>, // (resource_type, engine, id, action)
 }
 
 impl App {
@@ -311,7 +312,7 @@ impl App {
                 KeyCode::Char(c) => form.command.push(c),
                 _ => {}
             }
-            if let Some(cmd) = submit_exec {
+            if submit_exec.is_some() {
                 if let Some(c) = self.running.get(self.selected_index) {
                     self.pending_exec = Some((c.engine.clone(), c.id.clone()));
                 }
@@ -437,8 +438,21 @@ impl App {
             match key.code {
                 KeyCode::Char('y') | KeyCode::Enter => {
                     self.show_confirmation = false;
-                    if let Some((engine, id, action)) = self.pending_action.take() {
-                        let _ = self.engine_client.action_container(&engine, &id, &action);
+                    if let Some((resource_type, engine, id, action)) = self.pending_action.take() {
+                        self.execute_resource_action(resource_type, engine, id, action);
+                        self.refresh_data();
+                    }
+                }
+                KeyCode::Char('a') => {
+                    self.show_confirmation = false;
+                    if let Some((resource_type, engine, id, action)) = self.pending_action.take() {
+                        // Delete related resources first
+                        let related = self.get_related_resources(&resource_type, &id);
+                        for (r_type, r_engine, r_id) in related {
+                            self.execute_resource_action(r_type, r_engine, r_id, action.clone());
+                        }
+                        // Then delete the primary resource
+                        self.execute_resource_action(resource_type, engine, id, action);
                         self.refresh_data();
                     }
                 }
@@ -734,19 +748,35 @@ impl App {
 
     fn handle_action(&mut self, action: &str) {
         if action == "stop" || action == "rm" {
-            let container = match self.active_tab {
-                Tab::Running => self.running.get(self.selected_index),
-                Tab::Stopped => self.stopped.get(self.selected_index),
-                _ => None,
+            let res = match self.active_tab {
+                Tab::Running => self
+                    .running
+                    .get(self.selected_index)
+                    .map(|c| (c.engine.clone(), c.id.clone())),
+                Tab::Stopped => self
+                    .stopped
+                    .get(self.selected_index)
+                    .map(|c| (c.engine.clone(), c.id.clone())),
+                Tab::Images => self
+                    .images
+                    .get(self.selected_index)
+                    .map(|i| (i.engine.clone(), i.id.clone())),
+                Tab::Volumes => self
+                    .volumes
+                    .get(self.selected_index)
+                    .map(|v| (v.engine.clone(), v.name.clone())),
+                Tab::Networks => self
+                    .networks
+                    .get(self.selected_index)
+                    .map(|n| (n.engine.clone(), n.id.clone())),
             };
 
-            if let Some(c) = container {
-                self.pending_action = Some((c.engine.clone(), c.id.clone(), action.to_string()));
+            if let Some((engine, id)) = res {
+                self.pending_action = Some((self.active_tab.clone(), engine, id, action.to_string()));
                 self.show_confirmation = true;
             }
             return;
         }
-
         match self.active_tab {
             Tab::Running => {
                 if let Some(c) = self.running.get(self.selected_index) {
@@ -783,6 +813,46 @@ impl App {
                 }
             }
         }
+    }
+
+    fn execute_resource_action(&self, resource_type: Tab, engine: String, id: String, action: String) {
+        match resource_type {
+            Tab::Running | Tab::Stopped => {
+                let _ = self.engine_client.action_container(&engine, &id, &action);
+            }
+            Tab::Images => {
+                let _ = self.engine_client.action_image(&engine, &id, &action);
+            }
+            Tab::Volumes => {
+                let _ = self.engine_client.action_volume(&engine, &id, &action);
+            }
+            Tab::Networks => {
+                let _ = self.engine_client.action_network(&engine, &id, &action);
+            }
+        }
+    }
+
+    pub fn get_related_resources(&self, resource_type: &Tab, id: &str) -> Vec<(Tab, String, String)> {
+        let mut related = Vec::new();
+        match resource_type {
+            Tab::Images => {
+                // Find all containers using this image ID or name
+                // Check running containers
+                for c in &self.running {
+                    if c.image == id || c.id == id {
+                         related.push((Tab::Running, c.engine.clone(), c.id.clone()));
+                    }
+                }
+                // Check stopped containers
+                for c in &self.stopped {
+                    if c.image == id || c.id == id {
+                         related.push((Tab::Stopped, c.engine.clone(), c.id.clone()));
+                    }
+                }
+            }
+            _ => {} // Future work: handle Volumes -> Containers etc.
+        }
+        related
     }
 
     fn handle_primary_action(&mut self) {

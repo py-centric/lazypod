@@ -340,21 +340,36 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Confirmation Popup
     if app.show_confirmation {
-        let (title, action_text) = if let Some((_, _, action)) = &app.pending_action {
+        let (title, action_text) = if let Some((resource_type, _, id, action)) = &app.pending_action {
             let t = format!(" Confirm {} ", action);
-            let a = format!("Are you sure you want to {} this resource?", action);
+            let related = app.get_related_resources(resource_type, id);
+            let a = if !related.is_empty() {
+                format!(
+                    "Are you sure you want to {} this resource?\nFound {} related resources (containers).\n\nPress 'y' or 'Enter' for this only\nPress 'a' to delete ALL (resource + related)",
+                    action,
+                    related.len()
+                )
+            } else {
+                format!("Are you sure you want to {} this resource?", action)
+            };
             (t, a)
         } else {
             (" Confirm Stop ".to_string(), "Are you sure you want to stop this container?".to_string())
         };
 
-        let text = Paragraph::new(format!("{}\n\nPress 'y' or 'Enter' to confirm, 'n' or 'Esc' to cancel.", action_text))
+        let footer = if app.pending_action.is_some() && !app.get_related_resources(&app.pending_action.as_ref().unwrap().0, &app.pending_action.as_ref().unwrap().2).is_empty() {
+            "\n\nPress 'y'/'Enter': this only | 'a': ALL | 'n'/'Esc': cancel"
+        } else {
+            "\n\nPress 'y' or 'Enter' to confirm, 'n' or 'Esc' to cancel."
+        };
+
+        let text = Paragraph::new(format!("{}{}", action_text, footer))
             .block(Block::default().title(title).borders(Borders::ALL).style(Style::default().fg(Color::Red)))
             .wrap(Wrap { trim: true });
 
-        // Centered popup area (adjust sizing as necessary)
-        let area = centered_rect(50, 20, f.size());
-        f.render_widget(Clear, area); // clear background
+        // Centered popup area
+        let area = centered_rect(50, 30, f.size());
+        f.render_widget(Clear, area);
         f.render_widget(text, area);
     }
 

@@ -57,6 +57,9 @@ pub trait EngineClient {
     ) -> Result<()>;
     fn search_images(&self, engines: &[String], term: &str) -> Result<Vec<SearchResult>>;
     fn pull_image(&self, engine: &str, image: &str) -> Result<()>;
+    fn action_image(&self, engine: &str, id: &str, action: &str) -> Result<()>;
+    fn action_volume(&self, engine: &str, name: &str, action: &str) -> Result<()>;
+    fn action_network(&self, engine: &str, id: &str, action: &str) -> Result<()>;
     fn get_container_logs(&self, engine: &str, id: &str) -> Result<String>;
     fn configure_registries(&self, registries_csv: &str) -> Result<()>;
 }
@@ -273,6 +276,21 @@ impl EngineClient for LocalEngines {
 
     fn action_container(&self, engine: &str, id: &str, action: &str) -> Result<()> {
         Command::new(engine).args([action, id]).output()?;
+        Ok(())
+    }
+
+    fn action_image(&self, engine: &str, id: &str, action: &str) -> Result<()> {
+        Command::new(engine).args(["image", action, id]).output()?;
+        Ok(())
+    }
+
+    fn action_volume(&self, engine: &str, name: &str, action: &str) -> Result<()> {
+        Command::new(engine).args(["volume", action, name]).output()?;
+        Ok(())
+    }
+
+    fn action_network(&self, engine: &str, id: &str, action: &str) -> Result<()> {
+        Command::new(engine).args(["network", action, id]).output()?;
         Ok(())
     }
 

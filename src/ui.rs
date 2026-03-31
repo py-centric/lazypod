@@ -325,10 +325,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Help Block
     let tab_specific_help = match app.active_tab {
-        Tab::Running => " | Enter: Logs | s: Stop | d: rm | x: Exec",
-        Tab::Stopped => " | Enter: Logs | u: Start | d: rm",
-        Tab::Images => " | Enter: Run | /: Search | p: Pull | c: Config Regs",
-        Tab::Volumes | Tab::Networks => "",
+        Tab::Running => " | s: Stop | i/e: Shell | x: Exec",
+        Tab::Stopped => " | u: Start | d: rm",
+        Tab::Images => " | /: Search | p: Pull | c: Regs | Enter: Run",
+        Tab::Volumes | Tab::Networks => " | d: rm",
     };
 
     let help_text = Paragraph::new(format!(
@@ -506,6 +506,19 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         f.render_widget(p, area);
     }
 
+    if let Some(form) = &app.exec_form {
+        // Only show if the user is expected to type (i.e. command is empty or they initiated 'x')
+        let area = centered_rect(60, 20, f.size());
+        let p = Paragraph::new(format!("> {}_", form.command)).block(
+            Block::default()
+                .title(" Exec Command (e.g. /bin/bash, ls -l) | Enter: run | Esc: cancel ")
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::Cyan)),
+        );
+        f.render_widget(Clear, area);
+        f.render_widget(p, area);
+    }
+
     // Help Tooltip Popup
     if app.show_help_tooltip {
         let area = centered_rect(50, 60, f.size());
@@ -525,10 +538,11 @@ Navigation:
 Actions:
   s             : Stop running container
   S, u          : Start stopped container
-  d, Delete     : Remove container, image, or volume
-  x, e, i       : Drop into interactive shell (Exec)
-  /             : Search/pull images in Images tab
-  p             : Direct Pull Image (Images tab)
+  d, Delete     : Remove resource (container, image, volume)
+  i, e          : Interactive Shell (defaults to /bin/sh)
+  x             : Exec Custom Command (opens prompt)
+  /             : Search Images online (Images tab)
+  p             : Pull Image directly by name (Images tab)
   c             : Configure Search Registries (Images tab)
 ";
         let text = Paragraph::new(help_text)

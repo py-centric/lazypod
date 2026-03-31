@@ -173,6 +173,9 @@ impl App {
             }
 
             if let Some((engine, cmd)) = self.pending_exec.take() {
+                // Stop the event handler thread before handing over the terminal
+                drop(events);
+
                 crossterm::terminal::disable_raw_mode()?;
                 crossterm::execute!(
                     std::io::stdout(),
@@ -204,6 +207,10 @@ impl App {
                     crossterm::event::EnableMouseCapture
                 )?;
                 terminal.clear()?;
+
+                // Restart the event handler after returning from the shell
+                events = EventHandler::new(250);
+                self.refresh_data();
             }
         }
 
@@ -301,13 +308,14 @@ impl App {
                 KeyCode::Char(c) => form.command.push(c),
                 _ => {}
             }
-            if submit_exec.is_none() {
+            if let Some(cmd) = submit_exec {
+                if let Some(c) = self.running.get(self.selected_index) {
+                    self.pending_exec = Some((c.engine.clone(), c.id.clone()));
+                }
+                return;
+            } else {
                 return;
             }
-        }
-        if submit_exec.is_some() {
-            // Leave self.pending_exec alone, the main loop will catch it and consume exec_form
-            return;
         }
 
         let mut action_search = None;
@@ -549,13 +557,26 @@ impl App {
                     self.configure_registries_form = Some(ConfigureRegistriesForm::default());
                 }
             }
-            KeyCode::Char('x') | KeyCode::Char('e') | KeyCode::Char('i') => {
+            KeyCode::Char('i') | KeyCode::Char('e') => {
                 if matches!(self.active_tab, Tab::Running) {
                     if let Some(c) = self.running.get(self.selected_index) {
                         self.pending_exec = Some((c.engine.clone(), c.id.clone()));
                         self.exec_form = Some(ExecForm {
                             command: "/bin/sh".to_string(),
                         });
+                        if self.logs_focused {
+                            self.logs_focused = false;
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('x') => {
+                if matches!(self.active_tab, Tab::Running) {
+                    if self.running.get(self.selected_index).is_some() {
+                        self.exec_form = Some(ExecForm {
+                            command: String::new(),
+                        });
+                        self.logs_focused = false;
                     }
                 }
             }

@@ -1,14 +1,18 @@
 # Lazypod
 
-Lazypod is a modern, responsive Terminal User Interface (TUI) for Podman, inspired by the interface of `lazydocker`. Written in Rust using `ratatui` and `crossterm`.
+Lazypod is a modern, responsive Terminal User Interface (TUI) for container management, supporting both **Docker** and **Podman**. Inspired by the interface of `lazydocker`, it's written in Rust using `ratatui` and `crossterm`.
 
 ## Features
-- Complete interactive TUI for Podman via `std::process::Command` integrations
+- Complete interactive TUI for Docker and Podman via `std::process::Command` integrations
+- Multi-engine support: toggle between viewing Docker containers, Podman pods, or both
 - View, start, stop, and remove running and stopped containers
 - View images, pull from registry via interactive search, and spawn containers from images
+- Direct Image Pulling and interactive configuration of Podman search registries
+- Run Container popup with support for passing environment variables
 - View volumes and networks
-- Direct interactive `/bin/sh` shell dropping into running containers
+- Direct interactive shell dropping into running containers (`/bin/sh` or custom command)
 - Embedded real-time log viewer for pods
+- Contextual Help Bar depending on active tab and global Help Tooltips for keybindings
 
 ## Usage
 Simply run:

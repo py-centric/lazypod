@@ -1,17 +1,36 @@
 use crate::action::Action;
 use crate::events::EventHandler;
-use crate::podman::{Container, Image, LocalPodman, Network, PodmanClient, SearchResult, Volume};
+use crate::podman::{Container, EngineClient, Image, LocalEngines, Network, SearchResult, Volume};
 use crate::ui;
 use anyhow::Result;
 use crossterm::event::KeyCode;
 use ratatui::{backend::Backend, Terminal};
+
+#[derive(Default, Clone, PartialEq)]
+pub enum EngineView {
+    #[default]
+    Both,
+    Docker,
+    Podman,
+}
+
+impl EngineView {
+    pub fn next(&mut self) {
+        *self = match self {
+            EngineView::Both => EngineView::Docker,
+            EngineView::Docker => EngineView::Podman,
+            EngineView::Podman => EngineView::Both,
+        };
+    }
+}
 
 #[derive(Default, Clone)]
 pub struct CreateContainerForm {
     pub name: String,
     pub command: String,
     pub ports: String,
-    pub active_field: usize, // 0: Name, 1: Command, 2: Ports
+    pub env: String,
+    pub active_field: usize, // 0: Name, 1: Command, 2: Ports, 3: Env
 }
 
 #[derive(Default, Clone)]
@@ -20,6 +39,21 @@ pub struct SearchImageForm {
     pub results: Vec<SearchResult>,
     pub selected: usize,
     pub is_searching: bool,
+}
+
+#[derive(Default, Clone)]
+pub struct DirectPullForm {
+    pub image: String,
+}
+
+#[derive(Default, Clone)]
+pub struct ConfigureRegistriesForm {
+    pub registries: String,
+}
+
+#[derive(Default, Clone)]
+pub struct ExecForm {
+    pub command: String,
 }
 
 pub enum Tab {
@@ -46,8 +80,13 @@ pub struct App {
     pub container_logs: String,
     pub logs_focused: bool,
     pub logs_scroll: u16,
-    pub pending_exec: Option<String>,
-    podman: Box<dyn PodmanClient>,
+    pub pending_exec: Option<(String, String)>, // (engine, id)
+    pub engine_view: EngineView,
+    pub engine_client: Box<dyn EngineClient>,
+    pub show_help_tooltip: bool,
+    pub direct_pull_form: Option<DirectPullForm>,
+    pub configure_registries_form: Option<ConfigureRegistriesForm>,
+    pub exec_form: Option<ExecForm>,
 }
 
 impl App {
@@ -69,12 +108,17 @@ impl App {
             logs_focused: false,
             logs_scroll: 0,
             pending_exec: None,
-            podman: Box::new(LocalPodman),
+            engine_view: EngineView::Both,
+            engine_client: Box::new(LocalEngines),
+            show_help_tooltip: false,
+            direct_pull_form: None,
+            configure_registries_form: None,
+            exec_form: None,
         }
     }
 
     #[allow(dead_code)]
-    pub fn with_client(client: Box<dyn PodmanClient>) -> Self {
+    pub fn with_client(client: Box<dyn EngineClient>) -> Self {
         Self {
             should_quit: false,
             active_tab: Tab::Running,
@@ -92,13 +136,33 @@ impl App {
             logs_focused: false,
             logs_scroll: 0,
             pending_exec: None,
-            podman: client,
+            engine_view: EngineView::Both,
+            engine_client: client,
+            show_help_tooltip: false,
+            direct_pull_form: None,
+            configure_registries_form: None,
+            exec_form: None,
         }
+    }
+
+    pub fn get_active_engines(&self) -> Vec<String> {
+        match self.engine_view {
+            EngineView::Both => vec!["docker".to_string(), "podman".to_string()],
+            EngineView::Docker => vec!["docker".to_string()],
+            EngineView::Podman => vec!["podman".to_string()],
+        }
+    }
+
+    pub fn get_default_target_engine(&self) -> String {
+        self.get_active_engines()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "docker".into())
     }
 
     pub async fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
         let mut events = EventHandler::new(250);
-        
+
         self.refresh_data();
 
         while !self.should_quit {
@@ -108,22 +172,29 @@ impl App {
                 self.update(action);
             }
 
-            if let Some(cmd) = self.pending_exec.take() {
+            if let Some((engine, cmd)) = self.pending_exec.take() {
                 crossterm::terminal::disable_raw_mode()?;
                 crossterm::execute!(
                     std::io::stdout(),
                     crossterm::terminal::LeaveAlternateScreen,
                     crossterm::event::DisableMouseCapture
                 )?;
+
+                let mut args = vec!["exec", "-it", &cmd];
+                let custom_cmd = self.exec_form.take().map(|f| f.command).unwrap_or_else(|| "/bin/sh".to_string());
                 
-                let mut child = std::process::Command::new("podman")
-                    .arg("exec")
-                    .arg("-it")
-                    .arg(&cmd)
-                    .arg("/bin/sh")
+                let custom_args: Vec<&str> = custom_cmd.split_whitespace().collect();
+                if !custom_args.is_empty() {
+                    args.extend(custom_args);
+                } else {
+                    args.push("/bin/sh");
+                }
+
+                let mut child = std::process::Command::new(engine)
+                    .args(&args)
                     .spawn()?;
                 let _ = child.wait()?;
-                
+
                 crossterm::terminal::enable_raw_mode()?;
                 crossterm::execute!(
                     std::io::stdout(),
@@ -151,6 +222,95 @@ impl App {
             }
         };
 
+        if self.show_help_tooltip {
+            if matches!(key.code, KeyCode::Char('?') | KeyCode::Esc | KeyCode::Enter) {
+                self.show_help_tooltip = false;
+            }
+            return;
+        }
+
+        let mut pull_image_direct = None;
+        if let Some(form) = &mut self.direct_pull_form {
+            if self.is_pulling {
+                return;
+            }
+            match key.code {
+                KeyCode::Esc => self.direct_pull_form = None,
+                KeyCode::Enter => {
+                    let text = form.image.trim().to_string();
+                    if !text.is_empty() {
+                        pull_image_direct = Some(text);
+                    }
+                }
+                KeyCode::Backspace => {
+                    form.image.pop();
+                }
+                KeyCode::Char(c) => form.image.push(c),
+                _ => {}
+            }
+            if pull_image_direct.is_none() {
+                return;
+            }
+        }
+        if let Some(img) = pull_image_direct {
+            self.is_pulling = true;
+            let target = self.get_default_target_engine();
+            let _ = self.engine_client.pull_image(&target, &img);
+            self.is_pulling = false;
+            self.direct_pull_form = None;
+            self.refresh_data();
+            return;
+        }
+
+        let mut submit_registries = None;
+        if let Some(form) = &mut self.configure_registries_form {
+            match key.code {
+                KeyCode::Esc => self.configure_registries_form = None,
+                KeyCode::Enter => submit_registries = Some(form.registries.clone()),
+                KeyCode::Backspace => {
+                    form.registries.pop();
+                }
+                KeyCode::Char(c) => form.registries.push(c),
+                _ => {}
+            }
+            if submit_registries.is_none() {
+                return;
+            }
+        }
+        if let Some(regs) = submit_registries {
+            let _ = self.engine_client.configure_registries(&regs);
+            self.configure_registries_form = None;
+            return;
+        }
+
+        let mut submit_exec = None;
+        if let Some(form) = &mut self.exec_form {
+            match key.code {
+                KeyCode::Esc => {
+                    self.exec_form = None;
+                    self.pending_exec = None;
+                }
+                KeyCode::Enter => {
+                    submit_exec = Some(form.command.clone());
+                }
+                KeyCode::Backspace => {
+                    form.command.pop();
+                }
+                KeyCode::Char(c) => form.command.push(c),
+                _ => {}
+            }
+            if submit_exec.is_none() {
+                return;
+            }
+        }
+        if submit_exec.is_some() {
+            // Leave self.pending_exec alone, the main loop will catch it and consume exec_form
+            return;
+        }
+
+        let mut action_search = None;
+        let mut action_pull = None;
+
         if let Some(form) = &mut self.search_image_form {
             if self.is_pulling {
                 return; // ignore input while pulling
@@ -161,22 +321,15 @@ impl App {
                 }
                 KeyCode::Enter => {
                     if form.results.is_empty() {
-                        form.is_searching = true;
-                        if let Ok(results) = self.podman.search_images(&form.query) {
-                            form.results = results;
-                            form.selected = 0;
-                        }
-                        form.is_searching = false;
+                        action_search = Some(form.query.clone());
                     } else if let Some(res) = form.results.get(form.selected) {
-                        self.is_pulling = true;
-                        let _ = self.podman.pull_image(&res.name);
-                        self.is_pulling = false;
-                        self.search_image_form = None;
-                        self.refresh_data();
+                        action_pull = Some(res.name.clone());
                     }
                 }
                 KeyCode::Down | KeyCode::Tab => {
-                    if !form.results.is_empty() && form.selected < form.results.len().saturating_sub(1) {
+                    if !form.results.is_empty()
+                        && form.selected < form.results.len().saturating_sub(1)
+                    {
                         form.selected += 1;
                     }
                 }
@@ -197,6 +350,36 @@ impl App {
                 }
                 _ => {}
             }
+
+            if action_search.is_none() && action_pull.is_none() {
+                return;
+            }
+        }
+
+        if let Some(query) = action_search {
+            if let Some(form) = &mut self.search_image_form {
+                form.is_searching = true;
+            }
+            let engines = self.get_active_engines();
+            if let Ok(results) = self.engine_client.search_images(&engines, &query) {
+                if let Some(form) = &mut self.search_image_form {
+                    form.results = results;
+                    form.selected = 0;
+                }
+            }
+            if let Some(form) = &mut self.search_image_form {
+                form.is_searching = false;
+            }
+            return;
+        }
+
+        if let Some(name) = action_pull {
+            self.is_pulling = true;
+            let target_engine = self.get_default_target_engine();
+            let _ = self.engine_client.pull_image(&target_engine, &name);
+            self.is_pulling = false;
+            self.search_image_form = None;
+            self.refresh_data();
             return;
         }
 
@@ -210,16 +393,17 @@ impl App {
                     self.create_container_form = None;
                 }
                 KeyCode::Tab | KeyCode::Down => {
-                    form.active_field = (form.active_field + 1) % 3;
+                    form.active_field = (form.active_field + 1) % 4;
                 }
                 KeyCode::BackTab | KeyCode::Up => {
-                    form.active_field = form.active_field.checked_sub(1).unwrap_or(2);
+                    form.active_field = form.active_field.checked_sub(1).unwrap_or(3);
                 }
                 KeyCode::Backspace => {
                     let field = match form.active_field {
                         0 => &mut form.name,
                         1 => &mut form.command,
-                        _ => &mut form.ports,
+                        2 => &mut form.ports,
+                        _ => &mut form.env,
                     };
                     field.pop();
                 }
@@ -227,7 +411,8 @@ impl App {
                     let field = match form.active_field {
                         0 => &mut form.name,
                         1 => &mut form.command,
-                        _ => &mut form.ports,
+                        2 => &mut form.ports,
+                        _ => &mut form.env,
                     };
                     field.push(c);
                 }
@@ -252,7 +437,11 @@ impl App {
 
         if self.logs_focused {
             match key.code {
-                KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('q') => {
+                KeyCode::Esc
+                | KeyCode::Left
+                | KeyCode::Char('h')
+                | KeyCode::Char('H')
+                | KeyCode::Char('q') => {
                     self.logs_focused = false;
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -268,7 +457,8 @@ impl App {
                 KeyCode::Char('x') | KeyCode::Char('e') | KeyCode::Char('i') => {
                     if matches!(self.active_tab, Tab::Running) {
                         if let Some(c) = self.running.get(self.selected_index) {
-                            self.pending_exec = Some(c.id.clone());
+                            self.pending_exec = Some((c.engine.clone(), c.id.clone()));
+                            self.exec_form = Some(ExecForm { command: "/bin/sh".to_string() });
                             self.logs_focused = false;
                         }
                     }
@@ -326,8 +516,15 @@ impl App {
                 }
             }
             KeyCode::Char('r') => self.refresh_data(),
+            KeyCode::Char('E') => {
+                self.engine_view.next();
+                self.selected_index = 0;
+                self.refresh_data();
+            }
             KeyCode::Char('s') => {
-                if matches!(self.active_tab, Tab::Running) && self.running.get(self.selected_index).is_some() {
+                if matches!(self.active_tab, Tab::Running)
+                    && self.running.get(self.selected_index).is_some()
+                {
                     self.show_confirmation = true;
                 } else {
                     self.handle_action("stop");
@@ -338,16 +535,28 @@ impl App {
                     self.search_image_form = Some(SearchImageForm::default());
                 }
             }
+            KeyCode::Char('p') => {
+                if matches!(self.active_tab, Tab::Images) {
+                    self.direct_pull_form = Some(DirectPullForm::default());
+                }
+            }
+            KeyCode::Char('c') => {
+                if matches!(self.active_tab, Tab::Images) {
+                    self.configure_registries_form = Some(ConfigureRegistriesForm::default());
+                }
+            }
             KeyCode::Char('x') | KeyCode::Char('e') | KeyCode::Char('i') => {
                 if matches!(self.active_tab, Tab::Running) {
                     if let Some(c) = self.running.get(self.selected_index) {
-                        self.pending_exec = Some(c.id.clone());
+                        self.pending_exec = Some((c.engine.clone(), c.id.clone()));
+                        self.exec_form = Some(ExecForm { command: "/bin/sh".to_string() });
                     }
                 }
             }
             KeyCode::Char('S') | KeyCode::Char('u') => self.handle_action("start"),
             KeyCode::Char('d') | KeyCode::Delete => self.handle_action("rm"),
             KeyCode::Enter => self.handle_primary_action(),
+            KeyCode::Char('?') => self.show_help_tooltip = true,
             _ => {}
         }
     }
@@ -401,7 +610,7 @@ impl App {
                         self.logs_focused = false;
                         let available_rows = rows.saturating_sub(1);
                         let h = available_rows / 5;
-                        
+
                         if mouse.row < h {
                             self.active_tab = Tab::Running;
                             let idx = mouse.row.saturating_sub(1); // 1 for top border
@@ -438,18 +647,28 @@ impl App {
     }
 
     fn refresh_data(&mut self) {
-        if let Ok(c) = self.podman.get_containers() {
+        let engines = self.get_active_engines();
+        if let Ok(c) = self.engine_client.get_containers(&engines) {
             self.running = c.iter().filter(|x| x.is_running()).cloned().collect();
             self.stopped = c.iter().filter(|x| !x.is_running()).cloned().collect();
+        } else {
+            self.running.clear();
+            self.stopped.clear();
         }
-        if let Ok(i) = self.podman.get_images() {
+        if let Ok(i) = self.engine_client.get_images(&engines) {
             self.images = i;
+        } else {
+            self.images.clear();
         }
-        if let Ok(v) = self.podman.get_volumes() {
+        if let Ok(v) = self.engine_client.get_volumes(&engines) {
             self.volumes = v;
+        } else {
+            self.volumes.clear();
         }
-        if let Ok(n) = self.podman.get_networks() {
+        if let Ok(n) = self.engine_client.get_networks(&engines) {
             self.networks = n;
+        } else {
+            self.networks.clear();
         }
         let max = match self.active_tab {
             Tab::Running => self.running.len().saturating_sub(1),
@@ -470,14 +689,14 @@ impl App {
         match self.active_tab {
             Tab::Running => {
                 if let Some(c) = self.running.get(self.selected_index) {
-                    if let Ok(logs) = self.podman.get_container_logs(&c.id) {
+                    if let Ok(logs) = self.engine_client.get_container_logs(&c.engine, &c.id) {
                         self.container_logs = logs;
                     }
                 }
             }
             Tab::Stopped => {
                 if let Some(c) = self.stopped.get(self.selected_index) {
-                    if let Ok(logs) = self.podman.get_container_logs(&c.id) {
+                    if let Ok(logs) = self.engine_client.get_container_logs(&c.engine, &c.id) {
                         self.container_logs = logs;
                     }
                 }
@@ -490,13 +709,17 @@ impl App {
         match self.active_tab {
             Tab::Running => {
                 if let Some(c) = self.running.get(self.selected_index) {
-                    let _ = self.podman.action_container(&c.id, action);
+                    let _ = self
+                        .engine_client
+                        .action_container(&c.engine, &c.id, action);
                     self.refresh_data();
                 }
             }
             Tab::Stopped => {
                 if let Some(c) = self.stopped.get(self.selected_index) {
-                    let _ = self.podman.action_container(&c.id, action);
+                    let _ = self
+                        .engine_client
+                        .action_container(&c.engine, &c.id, action);
                     self.refresh_data();
                 }
             }
@@ -521,7 +744,15 @@ impl App {
     fn submit_create_container(&mut self) {
         let form = self.create_container_form.clone().unwrap();
         if let Some(img) = self.images.get(self.selected_index) {
-            let _ = self.podman.run_container(&img.id, &form.name, &form.ports, &form.command);
+            let target_engine = self.get_default_target_engine();
+            let _ = self.engine_client.run_container(
+                &target_engine,
+                &img.id,
+                &form.name,
+                &form.ports,
+                &form.env,
+                &form.command,
+            );
             self.refresh_data();
         }
     }
@@ -531,9 +762,9 @@ impl App {
 mod tests {
     use super::*;
 
-    struct MockPodman;
-    impl PodmanClient for MockPodman {
-        fn get_containers(&self) -> Result<Vec<Container>> {
+    struct MockEngine;
+    impl EngineClient for MockEngine {
+        fn get_containers(&self, engines: &[String]) -> Result<Vec<Container>> {
             Ok(vec![Container {
                 id: "1".into(),
                 image: "img".into(),
@@ -541,32 +772,46 @@ mod tests {
                 created: None,
                 state: Some("running".into()),
                 status: Some("Up".into()),
-                names: Some(serde_json::Value::Array(vec![serde_json::Value::String("test".into())])),
+                names: Some(serde_json::Value::Array(vec![serde_json::Value::String(
+                    "test".into(),
+                )])),
                 name: None,
+                engine: engines.get(0).unwrap_or(&"mock".to_string()).clone(),
             }])
         }
-        fn get_images(&self) -> Result<Vec<Image>> {
+        fn get_images(&self, engines: &[String]) -> Result<Vec<Image>> {
             Ok(vec![])
         }
-        fn get_volumes(&self) -> Result<Vec<Volume>> {
+        fn get_volumes(&self, engines: &[String]) -> Result<Vec<Volume>> {
             Ok(vec![])
         }
-        fn get_networks(&self) -> Result<Vec<Network>> {
+        fn get_networks(&self, engines: &[String]) -> Result<Vec<Network>> {
             Ok(vec![])
         }
-        fn get_container_logs(&self, _id: &str) -> Result<String> {
+        fn get_container_logs(&self, _engine: &str, _id: &str) -> Result<String> {
             Ok("".into())
         }
-        fn action_container(&self, _id: &str, _action: &str) -> Result<()> {
+        fn action_container(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
             Ok(())
         }
-        fn run_container(&self, _image: &str, _name: &str, _ports: &str, _command: &str) -> Result<()> {
+        fn run_container(
+            &self,
+            _engine: &str,
+            _image: &str,
+            _name: &str,
+            _ports: &str,
+            _env: &str,
+            _command: &str,
+        ) -> Result<()> {
             Ok(())
         }
-        fn search_images(&self, _term: &str) -> Result<Vec<SearchResult>> {
+        fn search_images(&self, _engines: &[String], _term: &str) -> Result<Vec<SearchResult>> {
             Ok(vec![])
         }
-        fn pull_image(&self, _image: &str) -> Result<()> {
+        fn pull_image(&self, _engine: &str, _image: &str) -> Result<()> {
+            Ok(())
+        }
+        fn configure_registries(&self, _registries_csv: &str) -> Result<()> {
             Ok(())
         }
     }
@@ -575,14 +820,20 @@ mod tests {
     fn test_app_update_navigation() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        let mut app = App::with_client(Box::new(MockPodman));
+        let mut app = App::with_client(Box::new(MockEngine));
         app.refresh_data();
-        
+
         assert_eq!(app.selected_index, 0);
-        app.update(Action::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty())));
+        app.update(Action::Key(KeyEvent::new(
+            KeyCode::Down,
+            KeyModifiers::empty(),
+        )));
         assert_eq!(app.selected_index, 0); // max is 0
-        
-        app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
+
+        app.update(Action::Key(KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::empty(),
+        )));
         assert!(matches!(app.active_tab, Tab::Stopped));
     }
 }

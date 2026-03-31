@@ -1,6 +1,6 @@
 # Lazypod
 
-Lazypod is a modern, responsive Terminal User Interface (TUI) for container management, supporting both **Docker** and **Podman**. Inspired by the interface of `lazydocker`, it's written in Rust using `ratatui` and `crossterm`.
+Lazypod is a modern, responsive Terminal User Interface (TUI) for container management, supporting both **Docker** and **Podman**. Inspired by the interface of [lazydocker](https://github.com/jesseduffield/lazydocker), it's written in Rust using `ratatui` and `crossterm`.
 
 ## Features
 - Complete interactive TUI for Docker and Podman via `std::process::Command` integrations
@@ -19,3 +19,7 @@ Simply run:
 ```bash
 cargo run
 ```
+
+## License
+
+This project is licensed under the [MIT License](LICENSE), an [OSI-approved](https://opensource.org/licenses/MIT) open-source license.

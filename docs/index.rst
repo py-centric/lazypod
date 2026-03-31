@@ -5,7 +5,7 @@ Welcome to Lazypod's documentation!
    :maxdepth: 2
    :caption: Contents:
 
-Lazypod is a modern, responsive Terminal User Interface (TUI) for container management, supporting both **Docker** and **Podman**.
+Lazypod is a modern, responsive Terminal User Interface (TUI) for container management, supporting both **Docker** and **Podman**. It is inspired by the interface of `lazydocker <https://github.com/jesseduffield/lazydocker>`_.
 
 Features
 --------
@@ -29,6 +29,11 @@ Simply run from the root directory:
 .. code-block:: bash
 
    cargo run
+
+License
+-------
+
+This project is licensed under the MIT License, an `OSI-approved <https://opensource.org/licenses/MIT>`_ open-source license. See the ``LICENSE`` file for details.
 
 Indices and tables
 ==================

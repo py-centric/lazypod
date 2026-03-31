@@ -340,8 +340,16 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Confirmation Popup
     if app.show_confirmation {
-        let text = Paragraph::new("Are you sure you want to stop this container?\n\nPress 'y' or 'Enter' to confirm, 'n' or 'Esc' to cancel.")
-            .block(Block::default().title(" Confirm Stop ").borders(Borders::ALL).style(Style::default().fg(Color::Red)))
+        let (title, action_text) = if let Some((_, _, action)) = &app.pending_action {
+            let t = format!(" Confirm {} ", action);
+            let a = format!("Are you sure you want to {} this resource?", action);
+            (t, a)
+        } else {
+            (" Confirm Stop ".to_string(), "Are you sure you want to stop this container?".to_string())
+        };
+
+        let text = Paragraph::new(format!("{}\n\nPress 'y' or 'Enter' to confirm, 'n' or 'Esc' to cancel.", action_text))
+            .block(Block::default().title(title).borders(Borders::ALL).style(Style::default().fg(Color::Red)))
             .wrap(Wrap { trim: true });
 
         // Centered popup area (adjust sizing as necessary)

@@ -87,6 +87,7 @@ pub struct App {
     pub direct_pull_form: Option<DirectPullForm>,
     pub configure_registries_form: Option<ConfigureRegistriesForm>,
     pub exec_form: Option<ExecForm>,
+    pub pending_action: Option<(String, String, String)>, // (engine, id, action)
 }
 
 impl App {
@@ -114,6 +115,7 @@ impl App {
             direct_pull_form: None,
             configure_registries_form: None,
             exec_form: None,
+            pending_action: None,
         }
     }
 
@@ -142,6 +144,7 @@ impl App {
             direct_pull_form: None,
             configure_registries_form: None,
             exec_form: None,
+            pending_action: None,
         }
     }
 
@@ -430,15 +433,18 @@ impl App {
             }
             return;
         }
-
         if self.show_confirmation {
             match key.code {
                 KeyCode::Char('y') | KeyCode::Enter => {
                     self.show_confirmation = false;
-                    self.handle_action("stop");
+                    if let Some((engine, id, action)) = self.pending_action.take() {
+                        let _ = self.engine_client.action_container(&engine, &id, &action);
+                        self.refresh_data();
+                    }
                 }
                 KeyCode::Char('n') | KeyCode::Esc => {
                     self.show_confirmation = false;
+                    self.pending_action = None;
                 }
                 _ => {}
             }
@@ -534,13 +540,7 @@ impl App {
                 self.refresh_data();
             }
             KeyCode::Char('s') => {
-                if matches!(self.active_tab, Tab::Running)
-                    && self.running.get(self.selected_index).is_some()
-                {
-                    self.show_confirmation = true;
-                } else {
-                    self.handle_action("stop");
-                }
+                self.handle_action("stop");
             }
             KeyCode::Char('/') => {
                 if matches!(self.active_tab, Tab::Images) {
@@ -733,6 +733,20 @@ impl App {
     }
 
     fn handle_action(&mut self, action: &str) {
+        if action == "stop" || action == "rm" {
+            let container = match self.active_tab {
+                Tab::Running => self.running.get(self.selected_index),
+                Tab::Stopped => self.stopped.get(self.selected_index),
+                _ => None,
+            };
+
+            if let Some(c) = container {
+                self.pending_action = Some((c.engine.clone(), c.id.clone(), action.to_string()));
+                self.show_confirmation = true;
+            }
+            return;
+        }
+
         match self.active_tab {
             Tab::Running => {
                 if let Some(c) = self.running.get(self.selected_index) {
@@ -750,7 +764,24 @@ impl App {
                     self.refresh_data();
                 }
             }
-            _ => {}
+            Tab::Images => {
+                if let Some(i) = self.images.get(self.selected_index) {
+                    let _ = self.engine_client.action_image(&i.engine, &i.id, action);
+                    self.refresh_data();
+                }
+            }
+            Tab::Volumes => {
+                if let Some(v) = self.volumes.get(self.selected_index) {
+                    let _ = self.engine_client.action_volume(&v.engine, &v.name, action);
+                    self.refresh_data();
+                }
+            }
+            Tab::Networks => {
+                if let Some(n) = self.networks.get(self.selected_index) {
+                    let _ = self.engine_client.action_network(&n.engine, &n.id, action);
+                    self.refresh_data();
+                }
+            }
         }
     }
 

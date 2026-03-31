@@ -181,8 +181,12 @@ impl App {
                 )?;
 
                 let mut args = vec!["exec", "-it", &cmd];
-                let custom_cmd = self.exec_form.take().map(|f| f.command).unwrap_or_else(|| "/bin/sh".to_string());
-                
+                let custom_cmd = self
+                    .exec_form
+                    .take()
+                    .map(|f| f.command)
+                    .unwrap_or_else(|| "/bin/sh".to_string());
+
                 let custom_args: Vec<&str> = custom_cmd.split_whitespace().collect();
                 if !custom_args.is_empty() {
                     args.extend(custom_args);
@@ -190,9 +194,7 @@ impl App {
                     args.push("/bin/sh");
                 }
 
-                let mut child = std::process::Command::new(engine)
-                    .args(&args)
-                    .spawn()?;
+                let mut child = std::process::Command::new(engine).args(&args).spawn()?;
                 let _ = child.wait()?;
 
                 crossterm::terminal::enable_raw_mode()?;
@@ -458,7 +460,9 @@ impl App {
                     if matches!(self.active_tab, Tab::Running) {
                         if let Some(c) = self.running.get(self.selected_index) {
                             self.pending_exec = Some((c.engine.clone(), c.id.clone()));
-                            self.exec_form = Some(ExecForm { command: "/bin/sh".to_string() });
+                            self.exec_form = Some(ExecForm {
+                                command: "/bin/sh".to_string(),
+                            });
                             self.logs_focused = false;
                         }
                     }
@@ -549,7 +553,9 @@ impl App {
                 if matches!(self.active_tab, Tab::Running) {
                     if let Some(c) = self.running.get(self.selected_index) {
                         self.pending_exec = Some((c.engine.clone(), c.id.clone()));
-                        self.exec_form = Some(ExecForm { command: "/bin/sh".to_string() });
+                        self.exec_form = Some(ExecForm {
+                            command: "/bin/sh".to_string(),
+                        });
                     }
                 }
             }
@@ -779,13 +785,13 @@ mod tests {
                 engine: engines.get(0).unwrap_or(&"mock".to_string()).clone(),
             }])
         }
-        fn get_images(&self, engines: &[String]) -> Result<Vec<Image>> {
+        fn get_images(&self, _engines: &[String]) -> Result<Vec<Image>> {
             Ok(vec![])
         }
-        fn get_volumes(&self, engines: &[String]) -> Result<Vec<Volume>> {
+        fn get_volumes(&self, _engines: &[String]) -> Result<Vec<Volume>> {
             Ok(vec![])
         }
-        fn get_networks(&self, engines: &[String]) -> Result<Vec<Network>> {
+        fn get_networks(&self, _engines: &[String]) -> Result<Vec<Network>> {
             Ok(vec![])
         }
         fn get_container_logs(&self, _engine: &str, _id: &str) -> Result<String> {
@@ -831,9 +837,42 @@ mod tests {
         assert_eq!(app.selected_index, 0); // max is 0
 
         app.update(Action::Key(KeyEvent::new(
-            KeyCode::Tab,
+            KeyCode::Char('2'),
             KeyModifiers::empty(),
         )));
         assert!(matches!(app.active_tab, Tab::Stopped));
+
+        app.update(Action::Key(KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::empty(),
+        )));
+        assert!(app.logs_focused);
+    }
+
+    #[test]
+    fn test_app_engine_toggle() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::with_client(Box::new(MockEngine));
+        
+        assert!(matches!(app.engine_filter, Engine::Both));
+
+        app.update(Action::Key(KeyEvent::new(
+            KeyCode::Char('e'),
+            KeyModifiers::empty(),
+        )));
+        assert!(matches!(app.engine_filter, Engine::Docker));
+        
+        app.update(Action::Key(KeyEvent::new(
+            KeyCode::Char('E'),
+            KeyModifiers::empty(),
+        )));
+        assert!(matches!(app.engine_filter, Engine::Podman));
+
+        app.update(Action::Key(KeyEvent::new(
+            KeyCode::Char('e'),
+            KeyModifiers::empty(),
+        )));
+        assert!(matches!(app.engine_filter, Engine::Both));
     }
 }

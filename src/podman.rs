@@ -379,7 +379,7 @@ impl EngineClient for LocalEngines {
 
         let conf_path = containers_dir.join("registries.conf");
         let new_line = format!("unqualified-search-registries = [{}]", formatted);
-        
+
         let existing_content = std::fs::read_to_string(&conf_path).unwrap_or_default();
         let mut new_lines = Vec::new();
         let mut replaced = false;
@@ -400,7 +400,7 @@ impl EngineClient for LocalEngines {
             }
             new_lines.push(new_line);
         }
-        
+
         new_lines.push(String::new()); // trailing newline
 
         std::fs::write(conf_path, new_lines.join("\n"))?;
@@ -463,5 +463,62 @@ mod tests {
         assert_eq!(containers[0].id, "123");
         assert_eq!(containers[0].is_running(), true);
         assert_eq!(containers[0].get_names(), vec!["my_container"]);
+        assert_eq!(containers[0].get_command(), "sh");
+    }
+
+    #[test]
+    fn test_container_methods_fallback() {
+        let c = Container {
+            id: "1".into(),
+            image: "test".into(),
+            command: Some(serde_json::Value::String("cmd".into())),
+            created: None,
+            state: Some(serde_json::Value::String("exited".into())),
+            status: Some(serde_json::Value::String("Exited (0)".into())),
+            names: None,
+            name: Some("test_name".into()),
+            engine: "docker".into(),
+        };
+        assert_eq!(c.get_names(), vec!["test_name"]);
+        assert_eq!(c.get_command(), "cmd");
+        assert_eq!(c.is_running(), false);
+        assert_eq!(c.get_state_str(), "exited");
+    }
+
+    #[test]
+    fn test_image_get_names() {
+        let mut img = Image {
+            id: "img1".into(),
+            parent_id: None,
+            repo_tags: Some(serde_json::Value::Array(vec!["ubuntu:latest".into()])),
+            names: None,
+            size: None,
+            engine: "test".into(),
+        };
+        assert_eq!(img.get_names(), vec!["ubuntu:latest"]);
+
+        img.names = Some(serde_json::Value::String("my_image".into()));
+        assert_eq!(img.get_names(), vec!["my_image", "ubuntu:latest"]);
+    }
+
+    #[test]
+    fn test_parse_json_output() {
+        // Test array (Podman)
+        let array_json = b"[{\"Name\": \"net1\"}, {\"Name\": \"net2\"}]";
+        let nets: Vec<Network> = parse_json_output(array_json);
+        assert_eq!(nets.len(), 2);
+        assert_eq!(nets[0].name, "net1");
+
+        // Test JSON Lines (Docker)
+        let lines_json = b"{\"Name\": \"net1\"}\n{\"Name\": \"net2\"}\n";
+        let nets_lines: Vec<Network> = parse_json_output(lines_json);
+        assert_eq!(nets_lines.len(), 2);
+        assert_eq!(nets_lines[1].name, "net2");
+
+        // Test single object fallback
+        let single_json = b"{\"Name\": \"net3\"}";
+        let single: Vec<Network> = parse_json_output(single_json);
+        assert_eq!(single.len(), 1);
+        assert_eq!(single[0].name, "net3");
     }
 }

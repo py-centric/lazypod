@@ -1,7 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Volume {
@@ -11,6 +10,8 @@ pub struct Volume {
     pub driver: String,
     #[serde(alias = "Mountpoint", default)]
     pub mountpoint: String,
+    #[serde(skip)]
+    pub engine: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +22,8 @@ pub struct Network {
     pub id: String,
     #[serde(alias = "driver", alias = "Driver", default)]
     pub driver: String,
+    #[serde(skip)]
+    pub engine: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,19 +40,28 @@ pub struct SearchResult {
     pub official: String,
 }
 
-pub trait PodmanClient {
-    fn get_containers(&self) -> Result<Vec<Container>>;
-    fn get_images(&self) -> Result<Vec<Image>>;
-    fn get_volumes(&self) -> Result<Vec<Volume>>;
-    fn get_networks(&self) -> Result<Vec<Network>>;
-    fn action_container(&self, id: &str, action: &str) -> Result<()>;
-    fn run_container(&self, image: &str, name: &str, ports: &str, command: &str) -> Result<()>;
-    fn search_images(&self, term: &str) -> Result<Vec<SearchResult>>;
-    fn pull_image(&self, image: &str) -> Result<()>;
-    fn get_container_logs(&self, id: &str) -> Result<String>;
+pub trait EngineClient {
+    fn get_containers(&self, engines: &[String]) -> Result<Vec<Container>>;
+    fn get_images(&self, engines: &[String]) -> Result<Vec<Image>>;
+    fn get_volumes(&self, engines: &[String]) -> Result<Vec<Volume>>;
+    fn get_networks(&self, engines: &[String]) -> Result<Vec<Network>>;
+    fn action_container(&self, engine: &str, id: &str, action: &str) -> Result<()>;
+    fn run_container(
+        &self,
+        engine: &str,
+        image: &str,
+        name: &str,
+        ports: &str,
+        env: &str,
+        command: &str,
+    ) -> Result<()>;
+    fn search_images(&self, engines: &[String], term: &str) -> Result<Vec<SearchResult>>;
+    fn pull_image(&self, engine: &str, image: &str) -> Result<()>;
+    fn get_container_logs(&self, engine: &str, id: &str) -> Result<String>;
+    fn configure_registries(&self, registries_csv: &str) -> Result<()>;
 }
 
-pub struct LocalPodman;
+pub struct LocalEngines;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Container {
@@ -69,6 +81,8 @@ pub struct Container {
     pub names: Option<serde_json::Value>,
     #[serde(alias = "Name", alias = "name")]
     pub name: Option<String>,
+    #[serde(skip)]
+    pub engine: String,
 }
 
 impl Container {
@@ -80,7 +94,10 @@ impl Container {
         }
         if let Some(v) = &self.names {
             if let Some(arr) = v.as_array() {
-                return arr.iter().filter_map(|x| x.as_str().map(String::from)).collect();
+                return arr
+                    .iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect();
             } else if let Some(s) = v.as_str() {
                 return vec![s.to_string()];
             }
@@ -91,7 +108,11 @@ impl Container {
     pub fn get_command(&self) -> String {
         if let Some(v) = &self.command {
             if let Some(arr) = v.as_array() {
-                return arr.iter().filter_map(|x| x.as_str().map(String::from)).collect::<Vec<_>>().join(" ");
+                return arr
+                    .iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect::<Vec<_>>()
+                    .join(" ");
             } else if let Some(s) = v.as_str() {
                 return s.to_string();
             }
@@ -142,6 +163,8 @@ pub struct Image {
     pub names: Option<serde_json::Value>,
     #[serde(alias = "Size", alias = "size", default)]
     pub size: Option<i64>,
+    #[serde(skip)]
+    pub engine: String,
 }
 
 impl Image {
@@ -165,123 +188,125 @@ impl Image {
     }
 }
 
-impl PodmanClient for LocalPodman {
-    fn get_containers(&self) -> Result<Vec<Container>> {
-        let output = Command::new("podman")
-            .args(&["ps", "-a", "--format", "json"])
-            .output()
-            .context("failed to execute podman ps")?;
-        
-        if !output.status.success() {
-            return Ok(vec![]);
-        }
+impl EngineClient for LocalEngines {
+    fn get_containers(&self, engines: &[String]) -> Result<Vec<Container>> {
+        let mut all_containers = Vec::new();
+        for engine in engines {
+            let output = Command::new(engine)
+                .args(["ps", "-a", "--format", "json"])
+                .output();
 
-        // DEBUG: Write raw JSON to file so the AI agent can read it
-        if let Ok(json_str) = String::from_utf8(output.stdout.clone()) {
-            let _ = std::fs::write("podman_debug.json", json_str);
-        }
-
-        let json_val: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or(serde_json::Value::Null);
-        let containers = if let Some(arr) = json_val.as_array() {
-            arr.iter().filter_map(|v| {
-                match serde_json::from_value::<Container>(v.clone()) {
-                    Ok(c) => Some(c),
-                    Err(e) => {
-                        let _ = std::fs::write("podman_parse_error.txt", format!("Failed to parse: {}\nRaw: {}", e, v));
-                        None
+            if let Ok(out) = output {
+                if out.status.success() {
+                    let mut parsed: Vec<Container> = parse_json_output(&out.stdout);
+                    for item in &mut parsed {
+                        item.engine = engine.clone();
                     }
+                    all_containers.extend(parsed);
                 }
-            }).collect()
-        } else if let Ok(c) = serde_json::from_value::<Container>(json_val) {
-            vec![c]
-        } else {
-            vec![]
-        };
-
-        Ok(containers)
-    }
-
-    fn get_images(&self) -> Result<Vec<Image>> {
-        let output = Command::new("podman")
-            .args(&["images", "--format", "json"])
-            .output()
-            .context("failed to execute podman images")?;
-
-        if !output.status.success() {
-            return Ok(vec![]);
+            }
         }
-
-        let json_val: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or(serde_json::Value::Null);
-        let images = if let Some(arr) = json_val.as_array() {
-            arr.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect()
-        } else if let Ok(i) = serde_json::from_value::<Image>(json_val) {
-            vec![i]
-        } else {
-            vec![]
-        };
-
-        Ok(images)
+        Ok(all_containers)
     }
 
-    fn get_volumes(&self) -> Result<Vec<Volume>> {
-        let output = Command::new("podman")
-            .args(&["volume", "ls", "--format", "json"])
-            .output()?;
-        if !output.status.success() {
-            return Ok(vec![]);
+    fn get_images(&self, engines: &[String]) -> Result<Vec<Image>> {
+        let mut all_images = Vec::new();
+        for engine in engines {
+            // Docker often uses `docker images --format json`, but older versions might need `--format '{{json .}}'`
+            // `--format json` works in newer Docker and Podman.
+            let output = Command::new(engine)
+                .args(["images", "--format", "json"])
+                .output();
+
+            if let Ok(out) = output {
+                if out.status.success() {
+                    let mut parsed: Vec<Image> = parse_json_output(&out.stdout);
+                    for item in &mut parsed {
+                        item.engine = engine.clone();
+                    }
+                    all_images.extend(parsed);
+                }
+            }
         }
-        let json_val: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or(serde_json::Value::Null);
-        let vols = if let Some(arr) = json_val.as_array() {
-            arr.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect()
-        } else if let Ok(v) = serde_json::from_value::<Volume>(json_val) {
-            vec![v]
-        } else {
-            vec![]
-        };
-        Ok(vols)
+        Ok(all_images)
     }
 
-    fn get_networks(&self) -> Result<Vec<Network>> {
-        let output = Command::new("podman")
-            .args(&["network", "ls", "--format", "json"])
-            .output()?;
-        if !output.status.success() {
-            return Ok(vec![]);
+    fn get_volumes(&self, engines: &[String]) -> Result<Vec<Volume>> {
+        let mut all_volumes = Vec::new();
+        for engine in engines {
+            let output = Command::new(engine)
+                .args(["volume", "ls", "--format", "json"])
+                .output();
+
+            if let Ok(out) = output {
+                if out.status.success() {
+                    let mut parsed: Vec<Volume> = parse_json_output(&out.stdout);
+                    for item in &mut parsed {
+                        item.engine = engine.clone();
+                    }
+                    all_volumes.extend(parsed);
+                }
+            }
         }
-        let json_val: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or(serde_json::Value::Null);
-        let nets = if let Some(arr) = json_val.as_array() {
-            arr.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect()
-        } else if let Ok(n) = serde_json::from_value::<Network>(json_val) {
-            vec![n]
-        } else {
-            vec![]
-        };
-        Ok(nets)
+        Ok(all_volumes)
     }
 
-    fn action_container(&self, id: &str, action: &str) -> Result<()> {
-        Command::new("podman")
-            .args(&[action, id])
-            .output()?;
+    fn get_networks(&self, engines: &[String]) -> Result<Vec<Network>> {
+        let mut all_networks = Vec::new();
+        for engine in engines {
+            let output = Command::new(engine)
+                .args(["network", "ls", "--format", "json"])
+                .output();
+
+            if let Ok(out) = output {
+                if out.status.success() {
+                    let mut parsed: Vec<Network> = parse_json_output(&out.stdout);
+                    for item in &mut parsed {
+                        item.engine = engine.clone();
+                    }
+                    all_networks.extend(parsed);
+                }
+            }
+        }
+        Ok(all_networks)
+    }
+
+    fn action_container(&self, engine: &str, id: &str, action: &str) -> Result<()> {
+        Command::new(engine).args([action, id]).output()?;
         Ok(())
     }
 
-    fn run_container(&self, image: &str, name: &str, ports: &str, command: &str) -> Result<()> {
-        let mut cmd = Command::new("podman");
+    fn run_container(
+        &self,
+        engine: &str,
+        image: &str,
+        name: &str,
+        ports: &str,
+        env: &str,
+        command: &str,
+    ) -> Result<()> {
+        let mut cmd = Command::new(engine);
         cmd.arg("run").arg("-d");
-        
+
         let name = name.trim();
         if !name.is_empty() {
             cmd.arg("--name").arg(name);
         }
-        
+
         let ports = ports.trim();
         if !ports.is_empty() {
             cmd.arg("-p").arg(ports);
         }
-        
+
+        let env = env.trim();
+        if !env.is_empty() {
+            for e in env.split_whitespace() {
+                cmd.arg("-e").arg(e);
+            }
+        }
+
         cmd.arg(image);
-        
+
         let command = command.trim();
         if !command.is_empty() {
             // Very simple split
@@ -289,7 +314,7 @@ impl PodmanClient for LocalPodman {
                 cmd.arg(arg);
             }
         }
-        
+
         let output = cmd.output()?;
         if !output.status.success() {
             return Err(anyhow::anyhow!("Failed to run container: {:?}", output));
@@ -297,34 +322,36 @@ impl PodmanClient for LocalPodman {
         Ok(())
     }
 
-    fn search_images(&self, term: &str) -> Result<Vec<SearchResult>> {
-        let output = Command::new("podman")
-            .args(&["search", term, "--format", "json"])
-            .output()?;
-        
-        if !output.status.success() {
-            return Ok(vec![]);
+    fn search_images(&self, engines: &[String], term: &str) -> Result<Vec<SearchResult>> {
+        let mut all_results = Vec::new();
+        for engine in engines {
+            let output = Command::new(engine)
+                .args(["search", term, "--format", "json"])
+                .output();
+
+            if let Ok(out) = output {
+                if out.status.success() {
+                    let parsed: Vec<SearchResult> = parse_json_output(&out.stdout);
+                    all_results.extend(parsed);
+                }
+            }
         }
-        
-        let results = serde_json::from_slice(&output.stdout).unwrap_or_default();
-        Ok(results)
+        Ok(all_results)
     }
 
-    fn pull_image(&self, image: &str) -> Result<()> {
-        Command::new("podman")
-            .args(&["pull", image])
-            .output()?;
+    fn pull_image(&self, engine: &str, image: &str) -> Result<()> {
+        Command::new(engine).args(["pull", image]).output()?;
         Ok(())
     }
 
-    fn get_container_logs(&self, id: &str) -> Result<String> {
-        let output = Command::new("podman")
-            .args(&["logs", "--tail", "50", id])
+    fn get_container_logs(&self, engine: &str, id: &str) -> Result<String> {
+        let output = Command::new(engine)
+            .args(["logs", "--tail", "50", id])
             .output()?;
-        
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        
+
         let mut logs = String::new();
         logs.push_str(&stdout);
         if !stdout.is_empty() && !stderr.is_empty() && !stdout.ends_with('\n') {
@@ -333,6 +360,85 @@ impl PodmanClient for LocalPodman {
         logs.push_str(&stderr);
         Ok(logs)
     }
+
+    fn configure_registries(&self, registries_csv: &str) -> Result<()> {
+        let registry_list: Vec<&str> = registries_csv
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let formatted = registry_list
+            .iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect::<Vec<String>>()
+            .join(", ");
+
+        let home = std::env::var("HOME").unwrap_or_else(|_| String::from("~"));
+        let containers_dir = std::path::PathBuf::from(home).join(".config/containers");
+        std::fs::create_dir_all(&containers_dir).ok(); // Ignore err if exists
+
+        let conf_path = containers_dir.join("registries.conf");
+        let new_line = format!("unqualified-search-registries = [{}]", formatted);
+        
+        let existing_content = std::fs::read_to_string(&conf_path).unwrap_or_default();
+        let mut new_lines = Vec::new();
+        let mut replaced = false;
+
+        for line in existing_content.lines() {
+            if line.trim().starts_with("unqualified-search-registries") {
+                new_lines.push(new_line.clone());
+                replaced = true;
+            } else {
+                new_lines.push(line.to_string());
+            }
+        }
+
+        if !replaced {
+            match new_lines.last() {
+                Some(line) if !line.is_empty() => new_lines.push(String::new()),
+                _ => {}
+            }
+            new_lines.push(new_line);
+        }
+        
+        new_lines.push(String::new()); // trailing newline
+
+        std::fs::write(conf_path, new_lines.join("\n"))?;
+        Ok(())
+    }
+}
+
+/// Helper function to parse either a JSON array (Podman) or JSON Lines (Docker) into a Vec of items
+fn parse_json_output<T: serde::de::DeserializeOwned>(stdout: &[u8]) -> Vec<T> {
+    if stdout.is_empty() {
+        return vec![];
+    }
+
+    // Attempt to parse as array first
+    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(stdout) {
+        if let Some(arr) = val.as_array() {
+            return arr
+                .iter()
+                .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                .collect();
+        } else if let Ok(item) = serde_json::from_value::<T>(val) {
+            return vec![item]; // Single obj fallback
+        }
+    }
+
+    // Fallback: parse as JSON Lines (Docker)
+    let text = String::from_utf8_lossy(stdout);
+    let mut results = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if !line.is_empty() {
+            if let Ok(item) = serde_json::from_str::<T>(line) {
+                results.push(item);
+            }
+        }
+    }
+
+    results
 }
 
 #[cfg(test)]

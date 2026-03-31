@@ -1,0 +1,44 @@
+name: Rust Quality Check
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        # This speeds up subsequent runs by caching dependencies
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy (Linter)
+        run: cargo clippy -- -D warnings
+        # "-D warnings" makes the CI fail if any clippy lints are triggered
+
+      - name: Run Tests
+        run: cargo test --verbose
+
+      - name: Security Audit
+        # This installs cargo-audit and checks for vulnerabilities
+        run: |
+          cargo install cargo-audit
+          cargo audit

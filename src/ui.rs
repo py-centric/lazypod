@@ -608,3 +608,22 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         )
         .split(popup_layout[1])[1]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn test_centered_rect() {
+        let root = Rect::new(0, 0, 100, 100);
+        let rect = centered_rect(50, 50, root);
+        
+        // 50% of 100 is 50. 
+        // (100 - 50) / 2 = 25 start.
+        assert_eq!(rect.width, 50);
+        assert_eq!(rect.height, 50);
+        assert_eq!(rect.x, 25);
+        assert_eq!(rect.y, 25);
+    }
+}

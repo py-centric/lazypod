@@ -6,7 +6,7 @@ use anyhow::Result;
 use crossterm::event::KeyCode;
 use ratatui::{backend::Backend, Terminal};
 
-#[derive(Default, Clone, PartialEq)]
+#[derive(Default, Clone, PartialEq, Debug)]
 pub enum EngineView {
     #[default]
     Both,
@@ -898,26 +898,41 @@ mod tests {
                 image: "img".into(),
                 command: None,
                 created: None,
-                state: Some("running".into()),
-                status: Some("Up".into()),
-                names: Some(serde_json::Value::Array(vec![serde_json::Value::String(
-                    "test".into(),
-                )])),
+                state: Some(serde_json::Value::String("running".into())),
+                status: Some(serde_json::Value::String("Up".into())),
+                names: Some(serde_json::Value::Array(vec!["test".into()])),
                 name: None,
-                engine: engines.get(0).unwrap_or(&"mock".to_string()).clone(),
+                engine: engines.get(0).cloned().unwrap_or_else(|| "mock".into()),
             }])
         }
         fn get_images(&self, _engines: &[String]) -> Result<Vec<Image>> {
-            Ok(vec![])
+            Ok(vec![Image {
+                id: "img1".into(),
+                parent_id: None,
+                repo_tags: Some(serde_json::Value::Array(vec!["alpine:latest".into()])),
+                names: None,
+                size: Some(5000),
+                engine: "mock".into(),
+            }])
         }
         fn get_volumes(&self, _engines: &[String]) -> Result<Vec<Volume>> {
-            Ok(vec![])
+            Ok(vec![Volume {
+                name: "vol1".into(),
+                driver: "local".into(),
+                mountpoint: "/v".into(),
+                engine: "mock".into(),
+            }])
         }
         fn get_networks(&self, _engines: &[String]) -> Result<Vec<Network>> {
-            Ok(vec![])
+            Ok(vec![Network {
+                name: "net1".into(),
+                id: "n1".into(),
+                driver: "bridge".into(),
+                engine: "mock".into(),
+            }])
         }
         fn get_container_logs(&self, _engine: &str, _id: &str) -> Result<String> {
-            Ok("".into())
+            Ok("mock logs".into())
         }
         fn action_container(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
             Ok(())
@@ -934,14 +949,37 @@ mod tests {
             Ok(())
         }
         fn search_images(&self, _engines: &[String], _term: &str) -> Result<Vec<SearchResult>> {
-            Ok(vec![])
+            Ok(vec![SearchResult {
+                index: "1".into(),
+                name: "search_res".into(),
+                description: "desc".into(),
+                stars: 10,
+                official: "OK".into(),
+            }])
         }
         fn pull_image(&self, _engine: &str, _image: &str) -> Result<()> {
+            Ok(())
+        }
+        fn action_image(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
+            Ok(())
+        }
+        fn action_volume(&self, _engine: &str, _name: &str, _action: &str) -> Result<()> {
+            Ok(())
+        }
+        fn action_network(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
             Ok(())
         }
         fn configure_registries(&self, _registries_csv: &str) -> Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn test_app_initialization() {
+        let app = App::new();
+        assert_eq!(app.active_tab, Tab::Running);
+        assert!(!app.should_quit);
+        assert_eq!(app.engine_view, EngineView::Both);
     }
 
     #[test]
@@ -952,49 +990,43 @@ mod tests {
         app.refresh_data();
 
         assert_eq!(app.selected_index, 0);
-        app.update(Action::Key(KeyEvent::new(
-            KeyCode::Down,
-            KeyModifiers::empty(),
-        )));
-        assert_eq!(app.selected_index, 0); // max is 0
+        // Move down (should stay at 0 as we only have 1 container)
+        app.update(Action::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty())));
+        assert_eq!(app.selected_index, 0);
 
-        app.update(Action::Key(KeyEvent::new(
-            KeyCode::Char('2'),
-            KeyModifiers::empty(),
-        )));
-        assert!(matches!(app.active_tab, Tab::Stopped));
-
-        app.update(Action::Key(KeyEvent::new(
-            KeyCode::Tab,
-            KeyModifiers::empty(),
-        )));
+        // Switch tabs
+        app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
         assert!(app.logs_focused);
+
+        app.update(Action::Key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::empty())));
+        assert!(!app.logs_focused);
+
+        // Cycle engine view
+        assert_eq!(app.engine_view, EngineView::Both);
+        app.update(Action::Key(KeyEvent::new(KeyCode::Char('E'), KeyModifiers::empty())));
+        assert_eq!(app.engine_view, EngineView::Docker);
     }
 
     #[test]
-    fn test_app_engine_toggle() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
+    fn test_app_refresh_data() {
         let mut app = App::with_client(Box::new(MockEngine));
-        
-        assert!(matches!(app.engine_filter, Engine::Both));
+        app.refresh_data();
+        assert_eq!(app.running.len(), 1);
+        assert_eq!(app.images.len(), 1);
+        assert_eq!(app.volumes.len(), 1);
+        assert_eq!(app.networks.len(), 1);
+    }
 
-        app.update(Action::Key(KeyEvent::new(
-            KeyCode::Char('e'),
-            KeyModifiers::empty(),
-        )));
-        assert!(matches!(app.engine_filter, Engine::Docker));
-        
-        app.update(Action::Key(KeyEvent::new(
-            KeyCode::Char('E'),
-            KeyModifiers::empty(),
-        )));
-        assert!(matches!(app.engine_filter, Engine::Podman));
+    #[test]
+    fn test_app_get_active_engines() {
+        let mut app = App::new();
+        app.engine_view = EngineView::Both;
+        assert_eq!(app.get_active_engines().len(), 2);
 
-        app.update(Action::Key(KeyEvent::new(
-            KeyCode::Char('e'),
-            KeyModifiers::empty(),
-        )));
-        assert!(matches!(app.engine_filter, Engine::Both));
+        app.engine_view = EngineView::Docker;
+        assert_eq!(app.get_active_engines(), vec!["docker".to_string()]);
+
+        app.engine_view = EngineView::Podman;
+        assert_eq!(app.get_active_engines(), vec!["podman".to_string()]);
     }
 }

@@ -485,58 +485,129 @@ mod tests {
     }
 
     #[test]
-    fn test_container_methods_fallback() {
+    fn test_container_get_names_edge_cases() {
+        // Case 1: Both name and names present
+        let mut c = Container {
+            id: "1".into(),
+            image: "test".into(),
+            command: None,
+            created: None,
+            state: None,
+            status: None,
+            names: Some(serde_json::Value::Array(vec!["names_entry".into()])),
+            name: Some("name_entry".into()),
+            engine: "test".into(),
+        };
+        assert_eq!(c.get_names(), vec!["name_entry"]);
+
+        // Case 2: Only names present
+        c.name = None;
+        assert_eq!(c.get_names(), vec!["names_entry"]);
+
+        // Case 3: names is a string (Docker style sometimes)
+        c.names = Some(serde_json::Value::String("string_name".into()));
+        assert_eq!(c.get_names(), vec!["string_name"]);
+
+        // Case 4: Nothing
+        c.names = None;
+        assert!(c.get_names().is_empty());
+    }
+
+    #[test]
+    fn test_container_get_command_variants() {
+        let mut c = Container {
+            id: "1".into(),
+            image: "test".into(),
+            command: Some(serde_json::Value::Array(vec!["ls".into(), "-l".into()])),
+            created: None,
+            state: None,
+            status: None,
+            names: None,
+            name: None,
+            engine: "test".into(),
+        };
+        assert_eq!(c.get_command(), "ls -l");
+
+        c.command = Some(serde_json::Value::String("ps aux".into()));
+        assert_eq!(c.get_command(), "ps aux");
+
+        c.command = None;
+        assert_eq!(c.get_command(), "");
+    }
+
+    #[test]
+    fn test_container_status_fallback() {
         let c = Container {
             id: "1".into(),
             image: "test".into(),
-            command: Some(serde_json::Value::String("cmd".into())),
+            command: None,
             created: None,
-            state: Some(serde_json::Value::String("exited".into())),
-            status: Some(serde_json::Value::String("Exited (0)".into())),
+            state: None,
+            status: None, // Missing status
             names: None,
-            name: Some("test_name".into()),
-            engine: "docker".into(),
-        };
-        assert_eq!(c.get_names(), vec!["test_name"]);
-        assert_eq!(c.get_command(), "cmd");
-        assert_eq!(c.is_running(), false);
-        assert_eq!(c.get_state_str(), "exited");
-    }
-
-    #[test]
-    fn test_image_get_names() {
-        let mut img = Image {
-            id: "img1".into(),
-            parent_id: None,
-            repo_tags: Some(serde_json::Value::Array(vec!["ubuntu:latest".into()])),
-            names: None,
-            size: None,
+            name: None,
             engine: "test".into(),
         };
-        assert_eq!(img.get_names(), vec!["ubuntu:latest"]);
-
-        img.names = Some(serde_json::Value::String("my_image".into()));
-        assert_eq!(img.get_names(), vec!["my_image", "ubuntu:latest"]);
+        assert_eq!(c.get_status_str(), "");
+        assert_eq!(c.get_state_str(), "unknown");
     }
 
     #[test]
-    fn test_parse_json_output() {
-        // Test array (Podman)
-        let array_json = b"[{\"Name\": \"net1\"}, {\"Name\": \"net2\"}]";
-        let nets: Vec<Network> = parse_json_output(array_json);
-        assert_eq!(nets.len(), 2);
-        assert_eq!(nets[0].name, "net1");
+    fn test_container_is_running_variants() {
+        let mut c = Container {
+            id: "1".into(),
+            image: "test".into(),
+            command: None,
+            created: None,
+            state: Some("Running".into()),
+            status: None,
+            names: None,
+            name: None,
+            engine: "test".into(),
+        };
+        assert!(c.is_running());
 
-        // Test JSON Lines (Docker)
-        let lines_json = b"{\"Name\": \"net1\"}\n{\"Name\": \"net2\"}\n";
-        let nets_lines: Vec<Network> = parse_json_output(lines_json);
-        assert_eq!(nets_lines.len(), 2);
-        assert_eq!(nets_lines[1].name, "net2");
+        c.state = Some("Up".into());
+        assert!(c.is_running());
 
-        // Test single object fallback
-        let single_json = b"{\"Name\": \"net3\"}";
-        let single: Vec<Network> = parse_json_output(single_json);
-        assert_eq!(single.len(), 1);
-        assert_eq!(single[0].name, "net3");
+        c.state = Some("Exited".into());
+        c.status = Some("Up 5 seconds".into());
+        assert!(c.is_running());
+
+        c.status = Some("Exited (0)".into());
+        assert!(!c.is_running());
+    }
+
+    #[test]
+    fn test_image_get_names_full() {
+        let img = Image {
+            id: "img1".into(),
+            parent_id: None,
+            repo_tags: Some(serde_json::Value::Array(vec!["tag1".into(), "tag2".into()])),
+            names: Some(serde_json::Value::String("name1".into())),
+            size: Some(100),
+            engine: "test".into(),
+        };
+        let names = img.get_names();
+        assert!(names.contains(&"name1".to_string()));
+        assert!(names.contains(&"tag1".to_string()));
+        assert!(names.contains(&"tag2".to_string()));
+    }
+
+    #[test]
+    fn test_parse_json_output_robustness() {
+        // Empty
+        let empty: Vec<Network> = parse_json_output(b"");
+        assert!(empty.is_empty());
+
+        // Invalid JSON
+        let invalid: Vec<Network> = parse_json_output(b"not json");
+        assert!(invalid.is_empty());
+
+        // Array with some invalid items
+        let partial = b"[{\"name\": \"ok\"}, \"bad\"]";
+        let nets: Vec<Network> = parse_json_output(partial);
+        assert_eq!(nets.len(), 1);
+        assert_eq!(nets[0].name, "ok");
     }
 }

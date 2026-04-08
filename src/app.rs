@@ -74,6 +74,11 @@ pub struct App {
     pub volumes: Vec<Volume>,
     pub networks: Vec<Network>,
     pub selected_index: usize,
+    pub running_index: usize,
+    pub stopped_index: usize,
+    pub images_index: usize,
+    pub volumes_index: usize,
+    pub networks_index: usize,
     pub show_confirmation: bool,
     pub create_container_form: Option<CreateContainerForm>,
     pub search_image_form: Option<SearchImageForm>,
@@ -102,6 +107,11 @@ impl App {
             volumes: Vec::new(),
             networks: Vec::new(),
             selected_index: 0,
+            running_index: 0,
+            stopped_index: 0,
+            images_index: 0,
+            volumes_index: 0,
+            networks_index: 0,
             show_confirmation: false,
             create_container_form: None,
             search_image_form: None,
@@ -131,6 +141,11 @@ impl App {
             volumes: Vec::new(),
             networks: Vec::new(),
             selected_index: 0,
+            running_index: 0,
+            stopped_index: 0,
+            images_index: 0,
+            volumes_index: 0,
+            networks_index: 0,
             show_confirmation: false,
             create_container_form: None,
             search_image_form: None,
@@ -502,30 +517,107 @@ impl App {
 
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('L') => {
+            KeyCode::Tab => {
+                if self.logs_focused {
+                    self.logs_focused = false;
+                    self.active_tab = Tab::Running;
+                    self.selected_index = self.running_index;
+                } else {
+                    match self.active_tab {
+                        Tab::Running => {
+                            self.running_index = self.selected_index;
+                            self.active_tab = Tab::Stopped;
+                            self.selected_index = self.stopped_index;
+                        }
+                        Tab::Stopped => {
+                            self.stopped_index = self.selected_index;
+                            self.active_tab = Tab::Images;
+                            self.selected_index = self.images_index;
+                        }
+                        Tab::Images => {
+                            self.images_index = self.selected_index;
+                            self.active_tab = Tab::Volumes;
+                            self.selected_index = self.volumes_index;
+                        }
+                        Tab::Volumes => {
+                            self.volumes_index = self.selected_index;
+                            self.active_tab = Tab::Networks;
+                            self.selected_index = self.networks_index;
+                        }
+                        Tab::Networks => {
+                            self.networks_index = self.selected_index;
+                            self.logs_focused = true;
+                        }
+                    }
+                }
+                self.fetch_logs();
+            }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('L') => {
                 if matches!(self.active_tab, Tab::Running | Tab::Stopped) {
                     self.logs_focused = true;
                     return;
                 }
-                self.active_tab = match self.active_tab {
-                    Tab::Running => Tab::Stopped,
-                    Tab::Stopped => Tab::Images,
-                    Tab::Images => Tab::Volumes,
-                    Tab::Volumes => Tab::Networks,
-                    Tab::Networks => Tab::Running,
+                match self.active_tab {
+                    Tab::Running => {
+                        self.running_index = self.selected_index;
+                        self.active_tab = Tab::Stopped;
+                        self.selected_index = self.stopped_index;
+                    }
+                    Tab::Stopped => {
+                        self.stopped_index = self.selected_index;
+                        self.active_tab = Tab::Images;
+                        self.selected_index = self.images_index;
+                    }
+                    Tab::Images => {
+                        self.images_index = self.selected_index;
+                        self.active_tab = Tab::Volumes;
+                        self.selected_index = self.volumes_index;
+                    }
+                    Tab::Volumes => {
+                        self.volumes_index = self.selected_index;
+                        self.active_tab = Tab::Networks;
+                        self.selected_index = self.networks_index;
+                    }
+                    Tab::Networks => {
+                        self.networks_index = self.selected_index;
+                        self.active_tab = Tab::Running;
+                        self.selected_index = self.running_index;
+                    }
                 };
-                self.selected_index = 0;
                 self.fetch_logs();
             }
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('H') => {
-                self.active_tab = match self.active_tab {
-                    Tab::Running => Tab::Networks,
-                    Tab::Stopped => Tab::Running,
-                    Tab::Images => Tab::Stopped,
-                    Tab::Volumes => Tab::Images,
-                    Tab::Networks => Tab::Volumes,
+                if self.logs_focused {
+                    self.logs_focused = false;
+                    return;
+                }
+                match self.active_tab {
+                    Tab::Running => {
+                        self.running_index = self.selected_index;
+                        self.active_tab = Tab::Networks;
+                        self.selected_index = self.networks_index;
+                    }
+                    Tab::Stopped => {
+                        self.stopped_index = self.selected_index;
+                        self.active_tab = Tab::Running;
+                        self.selected_index = self.running_index;
+                    }
+                    Tab::Images => {
+                        self.images_index = self.selected_index;
+                        self.active_tab = Tab::Stopped;
+                        self.selected_index = self.stopped_index;
+                    }
+                    Tab::Volumes => {
+                        self.volumes_index = self.selected_index;
+                        self.active_tab = Tab::Images;
+                        self.selected_index = self.images_index;
+                    }
+                    Tab::Networks => {
+                        self.networks_index = self.selected_index;
+                        self.active_tab = Tab::Volumes;
+                        self.selected_index = self.volumes_index;
+                    }
                 };
-                self.selected_index = 0;
                 self.fetch_logs();
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -539,11 +631,71 @@ impl App {
                 if self.selected_index < max {
                     self.selected_index += 1;
                     self.fetch_logs();
+                } else if !self.logs_focused {
+                    // Boundary: move to next pane
+                    match self.active_tab {
+                        Tab::Running => {
+                            self.running_index = self.selected_index;
+                            self.active_tab = Tab::Stopped;
+                            self.selected_index = self.stopped_index;
+                        }
+                        Tab::Stopped => {
+                            self.stopped_index = self.selected_index;
+                            self.active_tab = Tab::Images;
+                            self.selected_index = self.images_index;
+                        }
+                        Tab::Images => {
+                            self.images_index = self.selected_index;
+                            self.active_tab = Tab::Volumes;
+                            self.selected_index = self.volumes_index;
+                        }
+                        Tab::Volumes => {
+                            self.volumes_index = self.selected_index;
+                            self.active_tab = Tab::Networks;
+                            self.selected_index = self.networks_index;
+                        }
+                        Tab::Networks => {
+                            self.networks_index = self.selected_index;
+                            self.logs_focused = true;
+                            return;
+                        }
+                    }
+                    self.fetch_logs();
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.selected_index > 0 {
                     self.selected_index -= 1;
+                    self.fetch_logs();
+                } else if !self.logs_focused {
+                    // Boundary: move to previous pane
+                    match self.active_tab {
+                        Tab::Running => {
+                            self.running_index = self.selected_index;
+                            self.logs_focused = true;
+                            return;
+                        }
+                        Tab::Stopped => {
+                            self.stopped_index = self.selected_index;
+                            self.active_tab = Tab::Running;
+                            self.selected_index = self.running_index;
+                        }
+                        Tab::Images => {
+                            self.images_index = self.selected_index;
+                            self.active_tab = Tab::Stopped;
+                            self.selected_index = self.stopped_index;
+                        }
+                        Tab::Volumes => {
+                            self.volumes_index = self.selected_index;
+                            self.active_tab = Tab::Images;
+                            self.selected_index = self.images_index;
+                        }
+                        Tab::Networks => {
+                            self.networks_index = self.selected_index;
+                            self.active_tab = Tab::Volumes;
+                            self.selected_index = self.volumes_index;
+                        }
+                    }
                     self.fetch_logs();
                 }
             }
@@ -554,7 +706,11 @@ impl App {
                 self.refresh_data();
             }
             KeyCode::Char('s') => {
-                self.handle_action("stop");
+                match self.active_tab {
+                    Tab::Running => self.handle_action("stop"),
+                    Tab::Stopped => self.handle_action("start"),
+                    _ => {}
+                }
             }
             KeyCode::Char('/') => {
                 if matches!(self.active_tab, Tab::Images) {
@@ -711,16 +867,21 @@ impl App {
         } else {
             self.networks.clear();
         }
-        let max = match self.active_tab {
-            Tab::Running => self.running.len().saturating_sub(1),
-            Tab::Stopped => self.stopped.len().saturating_sub(1),
-            Tab::Images => self.images.len().saturating_sub(1),
-            Tab::Volumes => self.volumes.len().saturating_sub(1),
-            Tab::Networks => self.networks.len().saturating_sub(1),
+
+        self.running_index = std::cmp::min(self.running_index, self.running.len().saturating_sub(1));
+        self.stopped_index = std::cmp::min(self.stopped_index, self.stopped.len().saturating_sub(1));
+        self.images_index = std::cmp::min(self.images_index, self.images.len().saturating_sub(1));
+        self.volumes_index = std::cmp::min(self.volumes_index, self.volumes.len().saturating_sub(1));
+        self.networks_index = std::cmp::min(self.networks_index, self.networks.len().saturating_sub(1));
+
+        self.selected_index = match self.active_tab {
+            Tab::Running => self.running_index,
+            Tab::Stopped => self.stopped_index,
+            Tab::Images => self.images_index,
+            Tab::Volumes => self.volumes_index,
+            Tab::Networks => self.networks_index,
         };
-        if self.selected_index > max {
-            self.selected_index = max;
-        }
+
         self.fetch_logs();
     }
 
@@ -990,14 +1151,21 @@ mod tests {
         app.refresh_data();
 
         assert_eq!(app.selected_index, 0);
-        // Move down (should stay at 0 as we only have 1 container)
-        app.update(Action::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty())));
-        assert_eq!(app.selected_index, 0);
+        assert_eq!(app.active_tab, Tab::Running);
 
-        // Switch tabs
+        // Tab through all panes: Running -> Stopped -> Images -> Volumes -> Networks -> Logs
+        app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
+        assert_eq!(app.active_tab, Tab::Stopped);
+        app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
+        assert_eq!(app.active_tab, Tab::Images);
+        app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
+        assert_eq!(app.active_tab, Tab::Volumes);
+        app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
+        assert_eq!(app.active_tab, Tab::Networks);
         app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
         assert!(app.logs_focused);
 
+        // Back out from Logs
         app.update(Action::Key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::empty())));
         assert!(!app.logs_focused);
 

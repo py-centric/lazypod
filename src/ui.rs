@@ -58,7 +58,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default()
+        Style::default().fg(Color::DarkGray)
     };
 
     let running_items: Vec<ListItem> = app
@@ -76,9 +76,22 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .collect();
 
     let mut r_state = ListState::default();
-    if matches!(app.active_tab, Tab::Running) {
-        r_state.select(Some(app.selected_index));
-    }
+    r_state.select(Some(if matches!(app.active_tab, Tab::Running) {
+        app.selected_index
+    } else {
+        app.running_index
+    }));
+
+    let r_highlight_style = if matches!(app.active_tab, Tab::Running) && !app.logs_focused {
+        Style::default()
+            .bg(Color::Cyan)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD)
+    };
 
     let r_list = List::new(running_items)
         .block(
@@ -87,11 +100,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 .title("Running")
                 .border_style(r_style),
         )
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(r_highlight_style);
 
     f.render_stateful_widget(r_list, left_chunks[0], &mut r_state);
 
@@ -101,7 +110,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default()
+        Style::default().fg(Color::DarkGray)
     };
 
     let stopped_items: Vec<ListItem> = app
@@ -119,9 +128,22 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .collect();
 
     let mut s_state = ListState::default();
-    if matches!(app.active_tab, Tab::Stopped) {
-        s_state.select(Some(app.selected_index));
-    }
+    s_state.select(Some(if matches!(app.active_tab, Tab::Stopped) {
+        app.selected_index
+    } else {
+        app.stopped_index
+    }));
+
+    let s_highlight_style = if matches!(app.active_tab, Tab::Stopped) && !app.logs_focused {
+        Style::default()
+            .bg(Color::Cyan)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD)
+    };
 
     let s_list = List::new(stopped_items)
         .block(
@@ -130,11 +152,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 .title("Stopped")
                 .border_style(s_style),
         )
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(s_highlight_style);
 
     f.render_stateful_widget(s_list, left_chunks[1], &mut s_state);
 
@@ -144,7 +162,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default()
+        Style::default().fg(Color::DarkGray)
     };
 
     let images: Vec<ListItem> = app
@@ -162,9 +180,22 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .collect();
 
     let mut i_state = ListState::default();
-    if matches!(app.active_tab, Tab::Images) {
-        i_state.select(Some(app.selected_index));
-    }
+    i_state.select(Some(if matches!(app.active_tab, Tab::Images) {
+        app.selected_index
+    } else {
+        app.images_index
+    }));
+
+    let i_highlight_style = if matches!(app.active_tab, Tab::Images) && !app.logs_focused {
+        Style::default()
+            .bg(Color::Cyan)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD)
+    };
 
     let i_list = List::new(images)
         .block(
@@ -173,11 +204,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 .title("Images")
                 .border_style(i_style),
         )
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(i_highlight_style);
 
     f.render_stateful_widget(i_list, left_chunks[2], &mut i_state);
 
@@ -187,7 +214,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default()
+        Style::default().fg(Color::DarkGray)
     };
 
     let volumes: Vec<ListItem> = app
@@ -200,9 +227,22 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .collect();
 
     let mut v_state = ListState::default();
-    if matches!(app.active_tab, Tab::Volumes) {
-        v_state.select(Some(app.selected_index));
-    }
+    v_state.select(Some(if matches!(app.active_tab, Tab::Volumes) {
+        app.selected_index
+    } else {
+        app.volumes_index
+    }));
+
+    let v_highlight_style = if matches!(app.active_tab, Tab::Volumes) && !app.logs_focused {
+        Style::default()
+            .bg(Color::Cyan)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD)
+    };
 
     let v_list = List::new(volumes)
         .block(
@@ -211,11 +251,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 .title("Volumes")
                 .border_style(v_style),
         )
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(v_highlight_style);
 
     f.render_stateful_widget(v_list, left_chunks[3], &mut v_state);
 
@@ -225,7 +261,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default()
+        Style::default().fg(Color::DarkGray)
     };
 
     let networks: Vec<ListItem> = app
@@ -238,9 +274,22 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .collect();
 
     let mut n_state = ListState::default();
-    if matches!(app.active_tab, Tab::Networks) {
-        n_state.select(Some(app.selected_index));
-    }
+    n_state.select(Some(if matches!(app.active_tab, Tab::Networks) {
+        app.selected_index
+    } else {
+        app.networks_index
+    }));
+
+    let n_highlight_style = if matches!(app.active_tab, Tab::Networks) && !app.logs_focused {
+        Style::default()
+            .bg(Color::Cyan)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD)
+    };
 
     let n_list = List::new(networks)
         .block(
@@ -249,11 +298,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 .title("Networks")
                 .border_style(n_style),
         )
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(n_highlight_style);
 
     f.render_stateful_widget(n_list, left_chunks[4], &mut n_state);
 
@@ -332,7 +377,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     };
 
     let help_text = Paragraph::new(format!(
-        " ?: Help Tooltips | q: Quit | Tab: Switch Pane | ↓↑/jk: Nav{} | E: Toggle Engine",
+        " ?: Help Tooltips | q: Quit | Tab: Cycle Panes | ↓↑: Nav (boundary switch){} | E: Toggle Engine",
         tab_specific_help
     ))
     .style(Style::default().fg(Color::DarkGray));
@@ -550,17 +595,16 @@ LAZYPOD KEYBINDINGS:
 
 Global:
   q, Ctrl+c     : Quit
-  Tab, L/R      : Switch Panes or Tabs
+  Tab           : Cycle through ALL Panes (Left Tabs -> Logs)
   ?, Esc        : Toggle this Help popup
   E             : Toggle Engine Filter (Docker/Podman/Both)
 
 Navigation:
-  Up/Down, k/j  : Move selection
+  Up/Down, k/j  : Move selection (Switches panes at boundaries)
   Enter         : Primary Action (Logs, Run Image)
 
 Actions:
-  s             : Stop running container
-  S, u          : Start stopped container
+  s             : Toggle Stop (Running tab) / Start (Stopped tab)
   d, Delete     : Remove resource (container, image, volume)
   i, e          : Interactive Shell (defaults to /bin/sh)
   x             : Exec Custom Command (opens prompt)

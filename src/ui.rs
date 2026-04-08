@@ -175,7 +175,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 .next()
                 .unwrap_or_else(|| "<none>".into());
             let engine_icon = if i.engine == "docker" { "[D]" } else { "[P]" };
-            ListItem::new(format!("{} {}", engine_icon, tag))
+            let related = app.get_related_resources(&Tab::Images, &i.id);
+            let prefix = if !related.is_empty() { "*" } else { " " };
+            let style = if !related.is_empty() {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+            ListItem::new(format!("{} {} {}", prefix, engine_icon, tag)).style(style)
         })
         .collect();
 
@@ -330,7 +337,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         }
         Tab::Images => {
             if let Some(i) = app.images.get(app.selected_index) {
-                format!("ID: {}\nSize: {} bytes", i.id, i.size.unwrap_or(0))
+                let related = app.get_related_resources(&Tab::Images, &i.id);
+                let in_use = if !related.is_empty() { "Yes" } else { "No" };
+                let names = i.get_names().join("\n       ");
+                format!(
+                    "ID: {}\nNames: {}\nSize: {}\nCreated: {}\nIn Use: {}\nContainers: {}",
+                    i.id, names, i.get_size_str(), i.get_created_str(), in_use, related.len()
+                )
             } else {
                 "No image selected".to_string()
             }

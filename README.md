@@ -48,6 +48,10 @@ cargo run
 ```
 or use the optimized binary as shown above.
 
+## Contributing
+
+We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) guide for information on local development, testing, and our required branching strategy for automated Semantic Versioning.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE), an [OSI-approved](https://opensource.org/licenses/MIT) open-source license.

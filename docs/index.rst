@@ -30,6 +30,11 @@ Simply run from the root directory:
 
    cargo run
 
+Contributing
+------------
+
+We welcome contributions! Please see our ``CONTRIBUTING.md`` guide located in the repository root for more details on local development, testing, and our required branching strategy.
+
 License
 -------
 

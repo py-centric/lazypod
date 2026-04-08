@@ -1,34 +1,18 @@
 Welcome to Lazypod's documentation!
 ===================================
 
+Lazypod is a modern, responsive Terminal User Interface (TUI) for container management, supporting both **Docker** and **Podman**. It is inspired by the interface of `lazydocker <https://github.com/jesseduffield/lazydocker>`_.
+
+This documentation provides an in-depth look at Lazypod's features, how to install and use it, its architecture, and detailed keybindings.
+
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
 
-Lazypod is a modern, responsive Terminal User Interface (TUI) for container management, supporting both **Docker** and **Podman**. It is inspired by the interface of `lazydocker <https://github.com/jesseduffield/lazydocker>`_.
-
-Features
---------
-
-- Complete interactive TUI for Docker and Podman via ``std::process::Command`` integrations.
-- Multi-engine support: toggle between viewing Docker containers, Podman pods, or both.
-- View, start, stop, and remove running and stopped containers.
-- View images, pull from registry via interactive search, and spawn containers from images.
-- Direct Image Pulling and interactive configuration of Podman search registries.
-- Run Container popup with support for passing environment variables.
-- View volumes and networks.
-- Direct interactive shell dropping into running containers (``/bin/sh`` or custom command).
-- Embedded real-time log viewer for pods.
-- Contextual Help Bar depending on active tab and global Help Tooltips for keybindings.
-
-Installation & Usage
---------------------
-
-Simply run from the root directory:
-
-.. code-block:: bash
-
-   cargo run
+   features
+   installation
+   keybindings
+   architecture
 
 Contributing
 ------------

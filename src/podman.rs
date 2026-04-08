@@ -4,11 +4,11 @@ use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Volume {
-    #[serde(alias = "Name", default)]
+    #[serde(alias = "Name", alias = "name", default)]
     pub name: String,
-    #[serde(alias = "Driver", default)]
+    #[serde(alias = "Driver", alias = "driver", default)]
     pub driver: String,
-    #[serde(alias = "Mountpoint", default)]
+    #[serde(alias = "Mountpoint", alias = "mountpoint", default)]
     pub mountpoint: String,
     #[serde(skip)]
     pub engine: String,
@@ -16,9 +16,9 @@ pub struct Volume {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Network {
-    #[serde(alias = "name", alias = "Name", default)]
+    #[serde(alias = "name", alias = "Name", alias = "Name", default)]
     pub name: String,
-    #[serde(alias = "id", alias = "Id", default)]
+    #[serde(alias = "id", alias = "Id", alias = "ID", default)]
     pub id: String,
     #[serde(alias = "driver", alias = "Driver", default)]
     pub driver: String,
@@ -68,19 +68,19 @@ pub struct LocalEngines;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Container {
-    #[serde(alias = "Id", alias = "id", default)]
+    #[serde(alias = "Id", alias = "id", alias = "ID", default)]
     pub id: String,
-    #[serde(alias = "Image", alias = "image", default)]
+    #[serde(alias = "Image", alias = "image", alias = "Image", default)]
     pub image: String,
-    #[serde(alias = "Command", alias = "command")]
+    #[serde(alias = "Command", alias = "command", alias = "Command")]
     pub command: Option<serde_json::Value>,
-    #[serde(alias = "Created", alias = "created", default)]
+    #[serde(alias = "Created", alias = "created", alias = "CreatedAt")]
     pub created: Option<serde_json::Value>,
-    #[serde(alias = "State", alias = "state")]
+    #[serde(alias = "State", alias = "state", alias = "State")]
     pub state: Option<serde_json::Value>,
-    #[serde(alias = "Status", alias = "status")]
+    #[serde(alias = "Status", alias = "status", alias = "Status")]
     pub status: Option<serde_json::Value>,
-    #[serde(alias = "Names", alias = "names")]
+    #[serde(alias = "Names", alias = "names", alias = "Names")]
     pub names: Option<serde_json::Value>,
     #[serde(alias = "Name", alias = "name")]
     pub name: Option<String>,
@@ -156,15 +156,15 @@ impl Container {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Image {
-    #[serde(alias = "Id", alias = "id", default)]
+    #[serde(alias = "Id", alias = "id", alias = "ID", default)]
     pub id: String,
-    #[serde(alias = "ParentId", alias = "parentId", default)]
+    #[serde(alias = "ParentId", alias = "parentId", alias = "ParentID", default)]
     pub parent_id: Option<String>,
-    #[serde(alias = "RepoTags", alias = "repoTags")]
+    #[serde(alias = "RepoTags", alias = "repoTags", alias = "RepoTags")]
     pub repo_tags: Option<serde_json::Value>,
-    #[serde(alias = "Names", alias = "names")]
+    #[serde(alias = "Names", alias = "names", alias = "Names")]
     pub names: Option<serde_json::Value>,
-    #[serde(alias = "Size", alias = "size", default)]
+    #[serde(alias = "Size", alias = "size", alias = "Size", default)]
     pub size: Option<i64>,
     #[serde(skip)]
     pub engine: String,

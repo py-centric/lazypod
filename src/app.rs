@@ -997,16 +997,22 @@ impl App {
         let mut related = Vec::new();
         match resource_type {
             Tab::Images => {
-                // Find all containers using this image ID or name
+                // Try to find the image to get its names
+                let image_names = self.images.iter()
+                    .find(|i| i.id == id)
+                    .map(|i| i.get_names())
+                    .unwrap_or_default();
+
+                // Find all containers using this image ID or any of its names
                 // Check running containers
                 for c in &self.running {
-                    if c.image == id || c.id == id {
+                    if c.image == id || c.id == id || image_names.contains(&c.image) {
                          related.push((Tab::Running, c.engine.clone(), c.id.clone()));
                     }
                 }
                 // Check stopped containers
                 for c in &self.stopped {
-                    if c.image == id || c.id == id {
+                    if c.image == id || c.id == id || image_names.contains(&c.image) {
                          related.push((Tab::Stopped, c.engine.clone(), c.id.clone()));
                     }
                 }
@@ -1071,8 +1077,11 @@ mod tests {
                 id: "img1".into(),
                 parent_id: None,
                 repo_tags: Some(serde_json::Value::Array(vec!["alpine:latest".into()])),
+                repository: None,
+                tag: None,
                 names: None,
                 size: Some(5000),
+                created: Some(serde_json::Value::Number(1678901234.into())),
                 engine: "mock".into(),
             }])
         }

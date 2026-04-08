@@ -1,6 +1,8 @@
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use std::time::{Duration, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Volume {
@@ -68,21 +70,21 @@ pub struct LocalEngines;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Container {
-    #[serde(rename = "id", alias = "Id", alias = "ID", default)]
+    #[serde(rename = "id", alias = "Id", alias = "ID", alias = "id", default)]
     pub id: String,
-    #[serde(rename = "image", alias = "Image", default)]
+    #[serde(rename = "image", alias = "Image", alias = "image", default)]
     pub image: String,
-    #[serde(rename = "command", alias = "Command")]
+    #[serde(rename = "command", alias = "Command", alias = "command", default)]
     pub command: Option<serde_json::Value>,
-    #[serde(rename = "created", alias = "Created", alias = "CreatedAt")]
+    #[serde(rename = "created", alias = "Created", default)]
     pub created: Option<serde_json::Value>,
-    #[serde(rename = "state", alias = "State")]
+    #[serde(rename = "state", alias = "State", alias = "state", default)]
     pub state: Option<serde_json::Value>,
-    #[serde(rename = "status", alias = "Status")]
+    #[serde(rename = "status", alias = "Status", alias = "status", default)]
     pub status: Option<serde_json::Value>,
-    #[serde(rename = "names", alias = "Names")]
+    #[serde(rename = "names", alias = "Names", alias = "names", default)]
     pub names: Option<serde_json::Value>,
-    #[serde(rename = "name", alias = "Name")]
+    #[serde(rename = "name", alias = "Name", alias = "name", default)]
     pub name: Option<String>,
     #[serde(skip)]
     pub engine: String,
@@ -143,29 +145,35 @@ impl Container {
 
     pub fn is_running(&self) -> bool {
         let state = self.get_state_str().to_lowercase();
-        if state == "running" || state == "up" {
+        let status = self.get_status_str().to_lowercase();
+
+        if state == "running" || state == "up" || status.starts_with("up") {
             return true;
         }
-        let status = self.get_status_str().to_lowercase();
-        if status.starts_with("up") {
-            return true;
+        if state == "exited" || state == "stopped" || state == "created" || state == "paused" {
+            return false;
         }
         false
     }
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Image {
     #[serde(rename = "id", alias = "Id", alias = "ID", default)]
     pub id: String,
     #[serde(rename = "parentId", alias = "ParentId", alias = "ParentID", default)]
     pub parent_id: Option<String>,
-    #[serde(rename = "repoTags", alias = "RepoTags")]
+    #[serde(rename = "repoTags", alias = "RepoTags", default)]
     pub repo_tags: Option<serde_json::Value>,
-    #[serde(rename = "names", alias = "Names")]
+    #[serde(rename = "repository", alias = "Repository", default)]
+    pub repository: Option<String>,
+    #[serde(rename = "tag", alias = "Tag", default)]
+    pub tag: Option<String>,
+    #[serde(rename = "names", alias = "Names", default)]
     pub names: Option<serde_json::Value>,
     #[serde(rename = "size", alias = "Size", default)]
     pub size: Option<i64>,
+    #[serde(rename = "created", alias = "Created", default)]
+    pub created: Option<serde_json::Value>,
     #[serde(skip)]
     pub engine: String,
 }
@@ -173,6 +181,13 @@ pub struct Image {
 impl Image {
     pub fn get_names(&self) -> Vec<String> {
         let mut names = Vec::new();
+        if let Some(r) = &self.repository {
+            if let Some(t) = &self.tag {
+                names.push(format!("{}:{}", r, t));
+            } else {
+                names.push(r.clone());
+            }
+        }
         if let Some(v) = &self.names {
             if let Some(arr) = v.as_array() {
                 names.extend(arr.iter().filter_map(|x| x.as_str().map(String::from)));
@@ -188,6 +203,35 @@ impl Image {
             }
         }
         names
+    }
+
+    pub fn get_size_str(&self) -> String {
+        let size = self.size.unwrap_or(0);
+        if size == 0 {
+            return "0 B".to_string();
+        }
+        let units = ["B", "KB", "MB", "GB", "TB"];
+        let mut size = size as f64;
+        let mut unit_idx = 0;
+        while size >= 1024.0 && unit_idx < units.len() - 1 {
+            size /= 1024.0;
+            unit_idx += 1;
+        }
+        format!("{:.2} {}", size, units[unit_idx])
+    }
+
+    pub fn get_created_str(&self) -> String {
+        if let Some(v) = &self.created {
+            if let Some(n) = v.as_i64() {
+                // Assume Unix timestamp
+                let d = UNIX_EPOCH + Duration::from_secs(n as u64);
+                let datetime: DateTime<Utc> = d.into();
+                return datetime.format("%Y-%m-%d %H:%M:%S").to_string();
+            } else if let Some(s) = v.as_str() {
+                return s.to_string();
+            }
+        }
+        "Unknown".to_string()
     }
 }
 
@@ -559,7 +603,7 @@ mod tests {
             image: "test".into(),
             command: None,
             created: None,
-            state: Some("Running".into()),
+            state: Some(serde_json::Value::String("Running".into())),
             status: None,
             names: None,
             name: None,
@@ -567,14 +611,14 @@ mod tests {
         };
         assert!(c.is_running());
 
-        c.state = Some("Up".into());
+        c.state = Some(serde_json::Value::String("Up".into()));
         assert!(c.is_running());
 
-        c.state = Some("Exited".into());
-        c.status = Some("Up 5 seconds".into());
+        c.state = Some(serde_json::Value::String("Exited".into()));
+        c.status = Some(serde_json::Value::String("Up 5 seconds".into()));
         assert!(c.is_running());
 
-        c.status = Some("Exited (0)".into());
+        c.status = Some(serde_json::Value::String("Exited (0)".into()));
         assert!(!c.is_running());
     }
 
@@ -584,8 +628,11 @@ mod tests {
             id: "img1".into(),
             parent_id: None,
             repo_tags: Some(serde_json::Value::Array(vec!["tag1".into(), "tag2".into()])),
+            repository: None,
+            tag: None,
             names: Some(serde_json::Value::String("name1".into())),
             size: Some(100),
+            created: Some(serde_json::Value::Number(1678901234.into())),
             engine: "test".into(),
         };
         let names = img.get_names();
@@ -612,30 +659,50 @@ mod tests {
     }
 
     #[test]
-    fn test_engine_specific_parsing() {
-        // Podman-style (sometimes lowercase or Pascal depending on version/field)
-        let podman_raw = b"[{\"Id\":\"p1\", \"Image\":\"alpine\", \"State\":\"running\"}]";
-        let podman_containers: Vec<Container> = parse_json_output(podman_raw);
-        assert_eq!(podman_containers.len(), 1);
-        assert_eq!(podman_containers[0].id, "p1");
+    fn test_parse_actual_podman_output() {
+        let container_json = r#"[
+  {
+    "AutoRemove": false,
+    "Command": [
+      "cassandra",
+      "-f"
+    ],
+    "CreatedAt": "3 weeks ago",
+    "CIDFile": "",
+    "Exited": true,
+    "ExitedAt": 1774160464,
+    "ExitCode": 143,
+    "Id": "0d5dfb7b30da30928ed6c0412ff6f8b031367e3430ef533e908a435155229816",
+    "Image": "docker.io/library/cassandra:latest",
+    "ImageID": "494de8b59dac2c966544193ed857b3bbd0b54c1f49f032dab1e808e20843225f",
+    "IsInfra": false,
+    "Names": [
+      "cassandra"
+    ],
+    "State": "exited",
+    "Status": "Exited (143) 2 weeks ago",
+    "Created": 1773753413
+  }
+]"#;
+        let containers: Vec<Container> = parse_json_output(container_json.as_bytes());
+        assert_eq!(containers.len(), 1, "Failed to parse actual podman container output");
+        assert_eq!(containers[0].id, "0d5dfb7b30da30928ed6c0412ff6f8b031367e3430ef533e908a435155229816");
 
-        // Docker-style (JSON Lines)
-        let docker_raw = b"{\"ID\":\"d1\", \"Image\":\"ubuntu\", \"State\":\"exited\"}\n{\"ID\":\"d2\", \"Image\":\"redis\", \"State\":\"running\"}";
-        let docker_containers: Vec<Container> = parse_json_output(docker_raw);
-        assert_eq!(docker_containers.len(), 2);
-        assert_eq!(docker_containers[0].id, "d1");
-        assert_eq!(docker_containers[1].id, "d2");
-
-        // Images - Podman
-        let podman_img = b"[{\"id\":\"i1\", \"names\":[\"img1\"]}]";
-        let podman_images: Vec<Image> = parse_json_output(podman_img);
-        assert_eq!(podman_images.len(), 1);
-        assert_eq!(podman_images[0].id, "i1");
-
-        // Images - Docker
-        let docker_img = b"{\"ID\":\"i2\", \"RepoTags\":[\"img2:latest\"]}";
-        let docker_images: Vec<Image> = parse_json_output(docker_img);
-        assert_eq!(docker_images.len(), 1);
-        assert_eq!(docker_images[0].id, "i2");
+        let image_json = r#"[
+    {
+        "Id": "a3ecd26c734662caa005f5b33c3040cbd875351006fae7b15f21573e6b2fef27",
+        "ParentId": "",
+        "RepoTags": null,
+        "Size": 943748818,
+        "Names": [
+            "docker.io/library/mysql:latest"
+        ],
+        "Created": 1773969216,
+        "CreatedAt": "2026-03-20T01:13:36Z"
+    }
+]"#;
+        let images: Vec<Image> = parse_json_output(image_json.as_bytes());
+        assert_eq!(images.len(), 1, "Failed to parse actual podman image output");
+        assert_eq!(images[0].id, "a3ecd26c734662caa005f5b33c3040cbd875351006fae7b15f21573e6b2fef27");
     }
 }

@@ -4,11 +4,11 @@ use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Volume {
-    #[serde(alias = "Name", alias = "name", default)]
+    #[serde(rename = "name", alias = "Name", default)]
     pub name: String,
-    #[serde(alias = "Driver", alias = "driver", default)]
+    #[serde(rename = "driver", alias = "Driver", default)]
     pub driver: String,
-    #[serde(alias = "Mountpoint", alias = "mountpoint", default)]
+    #[serde(rename = "mountpoint", alias = "Mountpoint", default)]
     pub mountpoint: String,
     #[serde(skip)]
     pub engine: String,
@@ -16,11 +16,11 @@ pub struct Volume {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Network {
-    #[serde(alias = "name", alias = "Name", alias = "Name", default)]
+    #[serde(rename = "name", alias = "Name", default)]
     pub name: String,
-    #[serde(alias = "id", alias = "Id", alias = "ID", default)]
+    #[serde(rename = "id", alias = "Id", alias = "ID", default)]
     pub id: String,
-    #[serde(alias = "driver", alias = "Driver", default)]
+    #[serde(rename = "driver", alias = "Driver", default)]
     pub driver: String,
     #[serde(skip)]
     pub engine: String,
@@ -68,21 +68,21 @@ pub struct LocalEngines;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Container {
-    #[serde(alias = "Id", alias = "id", alias = "ID", default)]
+    #[serde(rename = "id", alias = "Id", alias = "ID", default)]
     pub id: String,
-    #[serde(alias = "Image", alias = "image", alias = "Image", default)]
+    #[serde(rename = "image", alias = "Image", default)]
     pub image: String,
-    #[serde(alias = "Command", alias = "command", alias = "Command")]
+    #[serde(rename = "command", alias = "Command")]
     pub command: Option<serde_json::Value>,
-    #[serde(alias = "Created", alias = "created", alias = "CreatedAt")]
+    #[serde(rename = "created", alias = "Created", alias = "CreatedAt")]
     pub created: Option<serde_json::Value>,
-    #[serde(alias = "State", alias = "state", alias = "State")]
+    #[serde(rename = "state", alias = "State")]
     pub state: Option<serde_json::Value>,
-    #[serde(alias = "Status", alias = "status", alias = "Status")]
+    #[serde(rename = "status", alias = "Status")]
     pub status: Option<serde_json::Value>,
-    #[serde(alias = "Names", alias = "names", alias = "Names")]
+    #[serde(rename = "names", alias = "Names")]
     pub names: Option<serde_json::Value>,
-    #[serde(alias = "Name", alias = "name")]
+    #[serde(rename = "name", alias = "Name")]
     pub name: Option<String>,
     #[serde(skip)]
     pub engine: String,
@@ -156,15 +156,15 @@ impl Container {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Image {
-    #[serde(alias = "Id", alias = "id", alias = "ID", default)]
+    #[serde(rename = "id", alias = "Id", alias = "ID", default)]
     pub id: String,
-    #[serde(alias = "ParentId", alias = "parentId", alias = "ParentID", default)]
+    #[serde(rename = "parentId", alias = "ParentId", alias = "ParentID", default)]
     pub parent_id: Option<String>,
-    #[serde(alias = "RepoTags", alias = "repoTags", alias = "RepoTags")]
+    #[serde(rename = "repoTags", alias = "RepoTags")]
     pub repo_tags: Option<serde_json::Value>,
-    #[serde(alias = "Names", alias = "names", alias = "Names")]
+    #[serde(rename = "names", alias = "Names")]
     pub names: Option<serde_json::Value>,
-    #[serde(alias = "Size", alias = "size", alias = "Size", default)]
+    #[serde(rename = "size", alias = "Size", default)]
     pub size: Option<i64>,
     #[serde(skip)]
     pub engine: String,
@@ -609,5 +609,33 @@ mod tests {
         let nets: Vec<Network> = parse_json_output(partial);
         assert_eq!(nets.len(), 1);
         assert_eq!(nets[0].name, "ok");
+    }
+
+    #[test]
+    fn test_engine_specific_parsing() {
+        // Podman-style (sometimes lowercase or Pascal depending on version/field)
+        let podman_raw = b"[{\"Id\":\"p1\", \"Image\":\"alpine\", \"State\":\"running\"}]";
+        let podman_containers: Vec<Container> = parse_json_output(podman_raw);
+        assert_eq!(podman_containers.len(), 1);
+        assert_eq!(podman_containers[0].id, "p1");
+
+        // Docker-style (JSON Lines)
+        let docker_raw = b"{\"ID\":\"d1\", \"Image\":\"ubuntu\", \"State\":\"exited\"}\n{\"ID\":\"d2\", \"Image\":\"redis\", \"State\":\"running\"}";
+        let docker_containers: Vec<Container> = parse_json_output(docker_raw);
+        assert_eq!(docker_containers.len(), 2);
+        assert_eq!(docker_containers[0].id, "d1");
+        assert_eq!(docker_containers[1].id, "d2");
+
+        // Images - Podman
+        let podman_img = b"[{\"id\":\"i1\", \"names\":[\"img1\"]}]";
+        let podman_images: Vec<Image> = parse_json_output(podman_img);
+        assert_eq!(podman_images.len(), 1);
+        assert_eq!(podman_images[0].id, "i1");
+
+        // Images - Docker
+        let docker_img = b"{\"ID\":\"i2\", \"RepoTags\":[\"img2:latest\"]}";
+        let docker_images: Vec<Image> = parse_json_output(docker_img);
+        assert_eq!(docker_images.len(), 1);
+        assert_eq!(docker_images[0].id, "i2");
     }
 }

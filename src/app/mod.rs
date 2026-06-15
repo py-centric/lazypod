@@ -1,69 +1,18 @@
+pub mod forms;
+pub mod state;
+
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use ratatui::{backend::Backend, Terminal, widgets::ListState};
+use crossterm::event::KeyCode;
+
 use crate::action::Action;
 use crate::events::EventHandler;
-use crate::podman::{Container, EngineClient, Image, LocalEngines, Network, SearchResult, Volume};
+use crate::podman::{Container, EngineClient, Image, LocalEngines, Network, Volume};
 use crate::ui;
+pub use forms::*;
+pub use state::{EngineView, Tab};
 use anyhow::Result;
-use crossterm::event::KeyCode;
-use ratatui::{backend::Backend, Terminal};
-
-#[derive(Default, Clone, PartialEq, Debug)]
-pub enum EngineView {
-    #[default]
-    Both,
-    Docker,
-    Podman,
-}
-
-impl EngineView {
-    pub fn next(&mut self) {
-        *self = match self {
-            EngineView::Both => EngineView::Docker,
-            EngineView::Docker => EngineView::Podman,
-            EngineView::Podman => EngineView::Both,
-        };
-    }
-}
-
-#[derive(Default, Clone)]
-pub struct CreateContainerForm {
-    pub name: String,
-    pub command: String,
-    pub ports: String,
-    pub env: String,
-    pub active_field: usize, // 0: Name, 1: Command, 2: Ports, 3: Env
-}
-
-#[derive(Default, Clone)]
-pub struct SearchImageForm {
-    pub query: String,
-    pub results: Vec<SearchResult>,
-    pub selected: usize,
-    pub is_searching: bool,
-}
-
-#[derive(Default, Clone)]
-pub struct DirectPullForm {
-    pub image: String,
-}
-
-#[derive(Default, Clone)]
-pub struct ConfigureRegistriesForm {
-    pub registries: String,
-}
-
-#[derive(Default, Clone)]
-pub struct ExecForm {
-    pub command: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Tab {
-    Running,
-    Stopped,
-    Images,
-    Volumes,
-    Networks,
-}
 
 pub struct App {
     pub should_quit: bool,
@@ -83,21 +32,32 @@ pub struct App {
     pub create_container_form: Option<CreateContainerForm>,
     pub search_image_form: Option<SearchImageForm>,
     pub is_pulling: bool,
-    pub container_logs: String,
+    pub container_logs: Vec<String>,
     pub logs_focused: bool,
-    pub logs_scroll: u16,
+    pub logs_state: ListState,
     pub pending_exec: Option<(String, String)>, // (engine, id)
     pub engine_view: EngineView,
-    pub engine_client: Box<dyn EngineClient>,
+    pub engine_client: Arc<Box<dyn EngineClient>>,
     pub show_help_tooltip: bool,
     pub direct_pull_form: Option<DirectPullForm>,
     pub configure_registries_form: Option<ConfigureRegistriesForm>,
     pub exec_form: Option<ExecForm>,
-    pub pending_action: Option<(Tab, String, String, String)>, // (resource_type, engine, id, action)
+    pub pending_action: Option<(Tab, String, String, String)>,
+    pub available_engines: Vec<String>,
+    pub action_tx: Option<mpsc::UnboundedSender<Action>>,
 }
 
 impl App {
     pub fn new() -> Self {
+        let mut available_engines = Vec::new();
+        // Fast synchronous check
+        if std::process::Command::new("docker").arg("--version").output().is_ok() {
+            available_engines.push("docker".to_string());
+        }
+        if std::process::Command::new("podman").arg("--version").output().is_ok() {
+            available_engines.push("podman".to_string());
+        }
+
         Self {
             should_quit: false,
             active_tab: Tab::Running,
@@ -116,60 +76,36 @@ impl App {
             create_container_form: None,
             search_image_form: None,
             is_pulling: false,
-            container_logs: String::new(),
+            container_logs: Vec::new(),
             logs_focused: false,
-            logs_scroll: 0,
+            logs_state: ListState::default(),
             pending_exec: None,
             engine_view: EngineView::Both,
-            engine_client: Box::new(LocalEngines),
+            engine_client: Arc::new(Box::new(LocalEngines)),
             show_help_tooltip: false,
             direct_pull_form: None,
             configure_registries_form: None,
             exec_form: None,
             pending_action: None,
+            available_engines,
+            action_tx: None,
         }
     }
 
     #[allow(dead_code)]
     pub fn with_client(client: Box<dyn EngineClient>) -> Self {
-        Self {
-            should_quit: false,
-            active_tab: Tab::Running,
-            running: Vec::new(),
-            stopped: Vec::new(),
-            images: Vec::new(),
-            volumes: Vec::new(),
-            networks: Vec::new(),
-            selected_index: 0,
-            running_index: 0,
-            stopped_index: 0,
-            images_index: 0,
-            volumes_index: 0,
-            networks_index: 0,
-            show_confirmation: false,
-            create_container_form: None,
-            search_image_form: None,
-            is_pulling: false,
-            container_logs: String::new(),
-            logs_focused: false,
-            logs_scroll: 0,
-            pending_exec: None,
-            engine_view: EngineView::Both,
-            engine_client: client,
-            show_help_tooltip: false,
-            direct_pull_form: None,
-            configure_registries_form: None,
-            exec_form: None,
-            pending_action: None,
-        }
+        let mut app = Self::new();
+        app.engine_client = Arc::new(client);
+        app
     }
 
     pub fn get_active_engines(&self) -> Vec<String> {
-        match self.engine_view {
+        let desired = match self.engine_view {
             EngineView::Both => vec!["docker".to_string(), "podman".to_string()],
             EngineView::Docker => vec!["docker".to_string()],
             EngineView::Podman => vec!["podman".to_string()],
-        }
+        };
+        desired.into_iter().filter(|e| self.available_engines.contains(e)).collect()
     }
 
     pub fn get_default_target_engine(&self) -> String {
@@ -181,8 +117,9 @@ impl App {
 
     pub async fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
         let mut events = EventHandler::new(250);
+        self.action_tx = Some(events._sender.clone());
 
-        self.refresh_data();
+        self.trigger_refresh_data();
 
         while !self.should_quit {
             terminal.draw(|f| ui::draw(f, self))?;
@@ -192,8 +129,8 @@ impl App {
             }
 
             if let Some((engine, cmd)) = self.pending_exec.take() {
-                // Stop the event handler thread before handing over the terminal
                 drop(events);
+                self.action_tx = None;
 
                 crossterm::terminal::disable_raw_mode()?;
                 crossterm::execute!(
@@ -227,9 +164,9 @@ impl App {
                 )?;
                 terminal.clear()?;
 
-                // Restart the event handler after returning from the shell
                 events = EventHandler::new(250);
-                self.refresh_data();
+                self.action_tx = Some(events._sender.clone());
+                self.trigger_refresh_data();
             }
         }
 
@@ -237,19 +174,75 @@ impl App {
     }
 
     pub fn update(&mut self, action: Action) {
-        let key = match action {
+        match action {
             Action::Quit => {
                 self.should_quit = true;
                 return;
             }
             Action::Tick => return,
-            Action::Key(k) => k,
-            Action::Mouse(m) => {
-                self.handle_mouse(m);
+            Action::DataRefreshed { running, stopped, images, volumes, networks } => {
+                self.running = running;
+                self.stopped = stopped;
+                self.images = images;
+                self.volumes = volumes;
+                self.networks = networks;
+                self.running_index = std::cmp::min(self.running_index, self.running.len().saturating_sub(1));
+                self.stopped_index = std::cmp::min(self.stopped_index, self.stopped.len().saturating_sub(1));
+                self.images_index = std::cmp::min(self.images_index, self.images.len().saturating_sub(1));
+                self.volumes_index = std::cmp::min(self.volumes_index, self.volumes.len().saturating_sub(1));
+                self.networks_index = std::cmp::min(self.networks_index, self.networks.len().saturating_sub(1));
+
+                self.selected_index = match self.active_tab {
+                    Tab::Running => self.running_index,
+                    Tab::Stopped => self.stopped_index,
+                    Tab::Images => self.images_index,
+                    Tab::Volumes => self.volumes_index,
+                    Tab::Networks => self.networks_index,
+                };
+                self.trigger_fetch_logs();
                 return;
             }
-        };
+            Action::LogsRefreshed { logs } => {
+                self.container_logs = logs;
+                if self.logs_focused && self.container_logs.is_empty() {
+                    self.logs_state.select(None);
+                } else if self.logs_focused {
+                    let max = self.container_logs.len().saturating_sub(1);
+                    if let Some(sel) = self.logs_state.selected() {
+                        self.logs_state.select(Some(std::cmp::min(sel, max)));
+                    } else {
+                        self.logs_state.select(Some(max));
+                    }
+                } else {
+                    self.logs_state.select(None);
+                }
+                return;
+            }
+            Action::SearchResults { results } => {
+                if let Some(form) = &mut self.search_image_form {
+                    form.results = results;
+                    form.selected = 0;
+                    form.is_searching = false;
+                }
+                return;
+            }
+            Action::PullComplete => {
+                self.is_pulling = false;
+                self.direct_pull_form = None;
+                self.search_image_form = None;
+                self.trigger_refresh_data();
+                return;
+            }
+            Action::ActionComplete => {
+                self.trigger_refresh_data();
+                return;
+            }
+            Action::Key(k) => self.handle_key(k),
+            Action::Mouse(m) => self.handle_mouse(m),
+        }
+    }
 
+    fn handle_key(&mut self, key: crossterm::event::KeyEvent) {
         if self.show_help_tooltip {
             if matches!(key.code, KeyCode::Char('?') | KeyCode::Esc | KeyCode::Enter) {
                 self.show_help_tooltip = false;
@@ -283,10 +276,14 @@ impl App {
         if let Some(img) = pull_image_direct {
             self.is_pulling = true;
             let target = self.get_default_target_engine();
-            let _ = self.engine_client.pull_image(&target, &img);
-            self.is_pulling = false;
-            self.direct_pull_form = None;
-            self.refresh_data();
+            let client = self.engine_client.clone();
+            let tx = self.action_tx.clone();
+            tokio::spawn(async move {
+                let _ = client.pull_image(&target, &img).await;
+                if let Some(tx) = tx {
+                    let _ = tx.send(Action::PullComplete);
+                }
+            });
             return;
         }
 
@@ -306,7 +303,14 @@ impl App {
             }
         }
         if let Some(regs) = submit_registries {
-            let _ = self.engine_client.configure_registries(&regs);
+            let client = self.engine_client.clone();
+            let tx = self.action_tx.clone();
+            tokio::spawn(async move {
+                let _ = client.configure_registries(&regs).await;
+                if let Some(tx) = tx {
+                    let _ = tx.send(Action::ActionComplete);
+                }
+            });
             self.configure_registries_form = None;
             return;
         }
@@ -342,7 +346,7 @@ impl App {
 
         if let Some(form) = &mut self.search_image_form {
             if self.is_pulling {
-                return; // ignore input while pulling
+                return;
             }
             match key.code {
                 KeyCode::Esc => {
@@ -390,25 +394,29 @@ impl App {
                 form.is_searching = true;
             }
             let engines = self.get_active_engines();
-            if let Ok(results) = self.engine_client.search_images(&engines, &query) {
-                if let Some(form) = &mut self.search_image_form {
-                    form.results = results;
-                    form.selected = 0;
+            let client = self.engine_client.clone();
+            let tx = self.action_tx.clone();
+            tokio::spawn(async move {
+                if let Ok(results) = client.search_images(&engines, &query).await {
+                    if let Some(tx) = tx {
+                        let _ = tx.send(Action::SearchResults { results });
+                    }
                 }
-            }
-            if let Some(form) = &mut self.search_image_form {
-                form.is_searching = false;
-            }
+            });
             return;
         }
 
         if let Some(name) = action_pull {
             self.is_pulling = true;
             let target_engine = self.get_default_target_engine();
-            let _ = self.engine_client.pull_image(&target_engine, &name);
-            self.is_pulling = false;
-            self.search_image_form = None;
-            self.refresh_data();
+            let client = self.engine_client.clone();
+            let tx = self.action_tx.clone();
+            tokio::spawn(async move {
+                let _ = client.pull_image(&target_engine, &name).await;
+                if let Some(tx) = tx {
+                    let _ = tx.send(Action::PullComplete);
+                }
+            });
             return;
         }
 
@@ -455,20 +463,16 @@ impl App {
                     self.show_confirmation = false;
                     if let Some((resource_type, engine, id, action)) = self.pending_action.take() {
                         self.execute_resource_action(resource_type, engine, id, action);
-                        self.refresh_data();
                     }
                 }
                 KeyCode::Char('a') => {
                     self.show_confirmation = false;
                     if let Some((resource_type, engine, id, action)) = self.pending_action.take() {
-                        // Delete related resources first
                         let related = self.get_related_resources(&resource_type, &id);
                         for (r_type, r_engine, r_id) in related {
                             self.execute_resource_action(r_type, r_engine, r_id, action.clone());
                         }
-                        // Then delete the primary resource
                         self.execute_resource_action(resource_type, engine, id, action);
-                        self.refresh_data();
                     }
                 }
                 KeyCode::Char('n') | KeyCode::Esc => {
@@ -488,15 +492,29 @@ impl App {
                 | KeyCode::Char('H')
                 | KeyCode::Char('q') => {
                     self.logs_focused = false;
+                    self.logs_state.select(None);
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
-                    self.logs_scroll = self.logs_scroll.saturating_sub(1);
+                    if let Some(selected) = self.logs_state.selected() {
+                        if selected > 0 {
+                            self.logs_state.select(Some(selected - 1));
+                        }
+                    }
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    let lines_count = self.container_logs.lines().count() as u16;
-                    let max_scroll = (lines_count + 15).saturating_sub(1);
-                    if self.logs_scroll < max_scroll {
-                        self.logs_scroll += 1;
+                    if let Some(selected) = self.logs_state.selected() {
+                        if selected < self.container_logs.len().saturating_sub(1) {
+                            self.logs_state.select(Some(selected + 1));
+                        }
+                    }
+                }
+                KeyCode::Char('y') | KeyCode::Char('c') => {
+                    if let Some(selected) = self.logs_state.selected() {
+                        if let Some(line) = self.container_logs.get(selected) {
+                            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                                let _ = clipboard.set_text(line.clone());
+                            }
+                        }
                     }
                 }
                 KeyCode::Char('x') | KeyCode::Char('e') | KeyCode::Char('i') => {
@@ -507,6 +525,7 @@ impl App {
                                 command: "/bin/sh".to_string(),
                             });
                             self.logs_focused = false;
+                            self.logs_state.select(None);
                         }
                     }
                 }
@@ -520,6 +539,7 @@ impl App {
             KeyCode::Tab => {
                 if self.logs_focused {
                     self.logs_focused = false;
+                    self.logs_state.select(None);
                     self.active_tab = Tab::Running;
                     self.selected_index = self.running_index;
                 } else {
@@ -550,7 +570,7 @@ impl App {
                         }
                     }
                 }
-                self.fetch_logs();
+                self.trigger_fetch_logs();
             }
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('L') => {
                 if matches!(self.active_tab, Tab::Running | Tab::Stopped) {
@@ -584,11 +604,12 @@ impl App {
                         self.selected_index = self.running_index;
                     }
                 };
-                self.fetch_logs();
+                self.trigger_fetch_logs();
             }
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('H') => {
                 if self.logs_focused {
                     self.logs_focused = false;
+                    self.logs_state.select(None);
                     return;
                 }
                 match self.active_tab {
@@ -618,7 +639,7 @@ impl App {
                         self.selected_index = self.volumes_index;
                     }
                 };
-                self.fetch_logs();
+                self.trigger_fetch_logs();
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 let max = match self.active_tab {
@@ -630,9 +651,8 @@ impl App {
                 };
                 if self.selected_index < max {
                     self.selected_index += 1;
-                    self.fetch_logs();
+                    self.trigger_fetch_logs();
                 } else if !self.logs_focused {
-                    // Boundary: move to next pane
                     match self.active_tab {
                         Tab::Running => {
                             self.running_index = self.selected_index;
@@ -660,15 +680,14 @@ impl App {
                             return;
                         }
                     }
-                    self.fetch_logs();
+                    self.trigger_fetch_logs();
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.selected_index > 0 {
                     self.selected_index -= 1;
-                    self.fetch_logs();
+                    self.trigger_fetch_logs();
                 } else if !self.logs_focused {
-                    // Boundary: move to previous pane
                     match self.active_tab {
                         Tab::Running => {
                             self.running_index = self.selected_index;
@@ -696,14 +715,14 @@ impl App {
                             self.selected_index = self.volumes_index;
                         }
                     }
-                    self.fetch_logs();
+                    self.trigger_fetch_logs();
                 }
             }
-            KeyCode::Char('r') => self.refresh_data(),
+            KeyCode::Char('r') => self.trigger_refresh_data(),
             KeyCode::Char('E') => {
                 self.engine_view.next();
                 self.selected_index = 0;
-                self.refresh_data();
+                self.trigger_refresh_data();
             }
             KeyCode::Char('s') => {
                 match self.active_tab {
@@ -736,6 +755,7 @@ impl App {
                         });
                         if self.logs_focused {
                             self.logs_focused = false;
+                            self.logs_state.select(None);
                         }
                     }
                 }
@@ -747,6 +767,7 @@ impl App {
                             command: String::new(),
                         });
                         self.logs_focused = false;
+                        self.logs_state.select(None);
                     }
                 }
             }
@@ -767,10 +788,10 @@ impl App {
         match mouse.kind {
             MouseEventKind::ScrollDown => {
                 if self.logs_focused {
-                    let lines_count = self.container_logs.lines().count() as u16;
-                    let max_scroll = (lines_count + 15).saturating_sub(1);
-                    if self.logs_scroll < max_scroll {
-                        self.logs_scroll += 1;
+                    if let Some(selected) = self.logs_state.selected() {
+                        if selected < self.container_logs.len().saturating_sub(1) {
+                            self.logs_state.select(Some(selected + 1));
+                        }
                     }
                     return;
                 }
@@ -783,17 +804,21 @@ impl App {
                 };
                 if self.selected_index < max {
                     self.selected_index += 1;
-                    self.fetch_logs();
+                    self.trigger_fetch_logs();
                 }
             }
             MouseEventKind::ScrollUp => {
                 if self.logs_focused {
-                    self.logs_scroll = self.logs_scroll.saturating_sub(1);
+                    if let Some(selected) = self.logs_state.selected() {
+                        if selected > 0 {
+                            self.logs_state.select(Some(selected - 1));
+                        }
+                    }
                     return;
                 }
                 if self.selected_index > 0 {
                     self.selected_index -= 1;
-                    self.fetch_logs();
+                    self.trigger_fetch_logs();
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
@@ -802,9 +827,13 @@ impl App {
                     if mouse.column >= left_panel_width {
                         if matches!(self.active_tab, Tab::Running | Tab::Stopped) {
                             self.logs_focused = true;
+                            if !self.container_logs.is_empty() && self.logs_state.selected().is_none() {
+                                self.logs_state.select(Some(self.container_logs.len().saturating_sub(1)));
+                            }
                         }
                     } else {
                         self.logs_focused = false;
+                        self.logs_state.select(None);
                         let available_rows = rows.saturating_sub(1);
                         let h = available_rows / 5;
 
@@ -835,7 +864,7 @@ impl App {
                             let max = self.networks.len().saturating_sub(1);
                             self.selected_index = std::cmp::min(idx as usize, max);
                         }
-                        self.fetch_logs();
+                        self.trigger_fetch_logs();
                     }
                 }
             }
@@ -843,67 +872,64 @@ impl App {
         }
     }
 
-    fn refresh_data(&mut self) {
+    fn trigger_refresh_data(&mut self) {
         let engines = self.get_active_engines();
-        if let Ok(c) = self.engine_client.get_containers(&engines) {
-            self.running = c.iter().filter(|x| x.is_running()).cloned().collect();
-            self.stopped = c.iter().filter(|x| !x.is_running()).cloned().collect();
-        } else {
-            self.running.clear();
-            self.stopped.clear();
-        }
-        if let Ok(i) = self.engine_client.get_images(&engines) {
-            self.images = i;
-        } else {
-            self.images.clear();
-        }
-        if let Ok(v) = self.engine_client.get_volumes(&engines) {
-            self.volumes = v;
-        } else {
-            self.volumes.clear();
-        }
-        if let Ok(n) = self.engine_client.get_networks(&engines) {
-            self.networks = n;
-        } else {
-            self.networks.clear();
-        }
+        let client = self.engine_client.clone();
+        let tx = self.action_tx.clone();
+        
+        tokio::spawn(async move {
+            let mut running = Vec::new();
+            let mut stopped = Vec::new();
+            if let Ok(c) = client.get_containers(&engines).await {
+                running = c.iter().filter(|x| x.is_running()).cloned().collect();
+                stopped = c.iter().filter(|x| !x.is_running()).cloned().collect();
+            }
+            let images = client.get_images(&engines).await.unwrap_or_default();
+            let volumes = client.get_volumes(&engines).await.unwrap_or_default();
+            let networks = client.get_networks(&engines).await.unwrap_or_default();
 
-        self.running_index = std::cmp::min(self.running_index, self.running.len().saturating_sub(1));
-        self.stopped_index = std::cmp::min(self.stopped_index, self.stopped.len().saturating_sub(1));
-        self.images_index = std::cmp::min(self.images_index, self.images.len().saturating_sub(1));
-        self.volumes_index = std::cmp::min(self.volumes_index, self.volumes.len().saturating_sub(1));
-        self.networks_index = std::cmp::min(self.networks_index, self.networks.len().saturating_sub(1));
-
-        self.selected_index = match self.active_tab {
-            Tab::Running => self.running_index,
-            Tab::Stopped => self.stopped_index,
-            Tab::Images => self.images_index,
-            Tab::Volumes => self.volumes_index,
-            Tab::Networks => self.networks_index,
-        };
-
-        self.fetch_logs();
+            if let Some(tx) = tx {
+                let _ = tx.send(Action::DataRefreshed { running, stopped, images, volumes, networks });
+            }
+        });
     }
 
-    fn fetch_logs(&mut self) {
-        self.logs_scroll = 0;
-        self.container_logs.clear();
-        match self.active_tab {
+    fn trigger_fetch_logs(&mut self) {
+        let (engine, id) = match self.active_tab {
             Tab::Running => {
                 if let Some(c) = self.running.get(self.selected_index) {
-                    if let Ok(logs) = self.engine_client.get_container_logs(&c.engine, &c.id) {
-                        self.container_logs = logs;
-                    }
+                    (Some(c.engine.clone()), Some(c.id.clone()))
+                } else {
+                    (None, None)
                 }
             }
             Tab::Stopped => {
                 if let Some(c) = self.stopped.get(self.selected_index) {
-                    if let Ok(logs) = self.engine_client.get_container_logs(&c.engine, &c.id) {
-                        self.container_logs = logs;
-                    }
+                    (Some(c.engine.clone()), Some(c.id.clone()))
+                } else {
+                    (None, None)
                 }
             }
-            _ => {}
+            _ => (None, None),
+        };
+
+        if let (Some(engine), Some(id)) = (engine, id) {
+            let client = self.engine_client.clone();
+            let tx = self.action_tx.clone();
+            tokio::spawn(async move {
+                if let Ok(logs) = client.get_container_logs(&engine, &id).await {
+                    if let Some(tx) = tx {
+                        let _ = tx.send(Action::LogsRefreshed { logs });
+                    }
+                } else {
+                    if let Some(tx) = tx {
+                        let _ = tx.send(Action::LogsRefreshed { logs: vec![] });
+                    }
+                }
+            });
+        } else {
+            self.container_logs.clear();
+            self.logs_state.select(None);
         }
     }
 
@@ -938,86 +964,120 @@ impl App {
             }
             return;
         }
+        
+        let client = self.engine_client.clone();
+        let tx = self.action_tx.clone();
+        let action = action.to_string();
+
         match self.active_tab {
             Tab::Running => {
                 if let Some(c) = self.running.get(self.selected_index) {
-                    let _ = self
-                        .engine_client
-                        .action_container(&c.engine, &c.id, action);
-                    self.refresh_data();
+                    let engine = c.engine.clone();
+                    let id = c.id.clone();
+                    tokio::spawn(async move {
+                        let _ = client.action_container(&engine, &id, &action).await;
+                        if let Some(tx) = tx {
+                            let _ = tx.send(Action::ActionComplete);
+                        }
+                    });
                 }
             }
             Tab::Stopped => {
                 if let Some(c) = self.stopped.get(self.selected_index) {
-                    let _ = self
-                        .engine_client
-                        .action_container(&c.engine, &c.id, action);
-                    self.refresh_data();
+                    let engine = c.engine.clone();
+                    let id = c.id.clone();
+                    tokio::spawn(async move {
+                        let _ = client.action_container(&engine, &id, &action).await;
+                        if let Some(tx) = tx {
+                            let _ = tx.send(Action::ActionComplete);
+                        }
+                    });
                 }
             }
             Tab::Images => {
                 if let Some(i) = self.images.get(self.selected_index) {
-                    let _ = self.engine_client.action_image(&i.engine, &i.id, action);
-                    self.refresh_data();
+                    let engine = i.engine.clone();
+                    let id = i.id.clone();
+                    tokio::spawn(async move {
+                        let _ = client.action_image(&engine, &id, &action).await;
+                        if let Some(tx) = tx {
+                            let _ = tx.send(Action::ActionComplete);
+                        }
+                    });
                 }
             }
             Tab::Volumes => {
                 if let Some(v) = self.volumes.get(self.selected_index) {
-                    let _ = self.engine_client.action_volume(&v.engine, &v.name, action);
-                    self.refresh_data();
+                    let engine = v.engine.clone();
+                    let name = v.name.clone();
+                    tokio::spawn(async move {
+                        let _ = client.action_volume(&engine, &name, &action).await;
+                        if let Some(tx) = tx {
+                            let _ = tx.send(Action::ActionComplete);
+                        }
+                    });
                 }
             }
             Tab::Networks => {
                 if let Some(n) = self.networks.get(self.selected_index) {
-                    let _ = self.engine_client.action_network(&n.engine, &n.id, action);
-                    self.refresh_data();
+                    let engine = n.engine.clone();
+                    let id = n.id.clone();
+                    tokio::spawn(async move {
+                        let _ = client.action_network(&engine, &id, &action).await;
+                        if let Some(tx) = tx {
+                            let _ = tx.send(Action::ActionComplete);
+                        }
+                    });
                 }
             }
         }
     }
 
     fn execute_resource_action(&self, resource_type: Tab, engine: String, id: String, action: String) {
-        match resource_type {
-            Tab::Running | Tab::Stopped => {
-                let _ = self.engine_client.action_container(&engine, &id, &action);
+        let client = self.engine_client.clone();
+        let tx = self.action_tx.clone();
+        tokio::spawn(async move {
+            match resource_type {
+                Tab::Running | Tab::Stopped => {
+                    let _ = client.action_container(&engine, &id, &action).await;
+                }
+                Tab::Images => {
+                    let _ = client.action_image(&engine, &id, &action).await;
+                }
+                Tab::Volumes => {
+                    let _ = client.action_volume(&engine, &id, &action).await;
+                }
+                Tab::Networks => {
+                    let _ = client.action_network(&engine, &id, &action).await;
+                }
             }
-            Tab::Images => {
-                let _ = self.engine_client.action_image(&engine, &id, &action);
+            if let Some(tx) = tx {
+                let _ = tx.send(Action::ActionComplete);
             }
-            Tab::Volumes => {
-                let _ = self.engine_client.action_volume(&engine, &id, &action);
-            }
-            Tab::Networks => {
-                let _ = self.engine_client.action_network(&engine, &id, &action);
-            }
-        }
+        });
     }
 
     pub fn get_related_resources(&self, resource_type: &Tab, id: &str) -> Vec<(Tab, String, String)> {
         let mut related = Vec::new();
         match resource_type {
             Tab::Images => {
-                // Try to find the image to get its names
                 let image_names = self.images.iter()
                     .find(|i| i.id == id)
                     .map(|i| i.get_names())
                     .unwrap_or_default();
 
-                // Find all containers using this image ID or any of its names
-                // Check running containers
                 for c in &self.running {
                     if c.image == id || c.id == id || image_names.contains(&c.image) {
                          related.push((Tab::Running, c.engine.clone(), c.id.clone()));
                     }
                 }
-                // Check stopped containers
                 for c in &self.stopped {
                     if c.image == id || c.id == id || image_names.contains(&c.image) {
                          related.push((Tab::Stopped, c.engine.clone(), c.id.clone()));
                     }
                 }
             }
-            _ => {} // Future work: handle Volumes -> Containers etc.
+            _ => {} 
         }
         related
     }
@@ -1026,6 +1086,9 @@ impl App {
         match self.active_tab {
             Tab::Running | Tab::Stopped => {
                 self.logs_focused = true;
+                if !self.container_logs.is_empty() && self.logs_state.selected().is_none() {
+                    self.logs_state.select(Some(self.container_logs.len().saturating_sub(1)));
+                }
             }
             Tab::Images => {
                 if self.images.get(self.selected_index).is_some() {
@@ -1040,15 +1103,22 @@ impl App {
         let form = self.create_container_form.clone().unwrap();
         if let Some(img) = self.images.get(self.selected_index) {
             let target_engine = self.get_default_target_engine();
-            let _ = self.engine_client.run_container(
-                &target_engine,
-                &img.id,
-                &form.name,
-                &form.ports,
-                &form.env,
-                &form.command,
-            );
-            self.refresh_data();
+            let client = self.engine_client.clone();
+            let tx = self.action_tx.clone();
+            let img_id = img.id.clone();
+            tokio::spawn(async move {
+                let _ = client.run_container(
+                    &target_engine,
+                    &img_id,
+                    &form.name,
+                    &form.ports,
+                    &form.env,
+                    &form.command,
+                ).await;
+                if let Some(tx) = tx {
+                    let _ = tx.send(Action::ActionComplete);
+                }
+            });
         }
     }
 }
@@ -1056,10 +1126,15 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use crate::podman::SearchResult;
 
     struct MockEngine;
+    
+    #[async_trait]
     impl EngineClient for MockEngine {
-        fn get_containers(&self, engines: &[String]) -> Result<Vec<Container>> {
+        async fn get_containers(&self, engines: &[String]) -> Result<Vec<Container>> {
             Ok(vec![Container {
                 id: "1".into(),
                 image: "img".into(),
@@ -1072,7 +1147,7 @@ mod tests {
                 engine: engines.get(0).cloned().unwrap_or_else(|| "mock".into()),
             }])
         }
-        fn get_images(&self, _engines: &[String]) -> Result<Vec<Image>> {
+        async fn get_images(&self, _engines: &[String]) -> Result<Vec<Image>> {
             Ok(vec![Image {
                 id: "img1".into(),
                 parent_id: None,
@@ -1085,7 +1160,7 @@ mod tests {
                 engine: "mock".into(),
             }])
         }
-        fn get_volumes(&self, _engines: &[String]) -> Result<Vec<Volume>> {
+        async fn get_volumes(&self, _engines: &[String]) -> Result<Vec<Volume>> {
             Ok(vec![Volume {
                 name: "vol1".into(),
                 driver: "local".into(),
@@ -1093,7 +1168,7 @@ mod tests {
                 engine: "mock".into(),
             }])
         }
-        fn get_networks(&self, _engines: &[String]) -> Result<Vec<Network>> {
+        async fn get_networks(&self, _engines: &[String]) -> Result<Vec<Network>> {
             Ok(vec![Network {
                 name: "net1".into(),
                 id: "n1".into(),
@@ -1101,13 +1176,13 @@ mod tests {
                 engine: "mock".into(),
             }])
         }
-        fn get_container_logs(&self, _engine: &str, _id: &str) -> Result<String> {
-            Ok("mock logs".into())
+        async fn get_container_logs(&self, _engine: &str, _id: &str) -> Result<Vec<String>> {
+            Ok(vec!["mock logs".into()])
         }
-        fn action_container(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
+        async fn action_container(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
             Ok(())
         }
-        fn run_container(
+        async fn run_container(
             &self,
             _engine: &str,
             _image: &str,
@@ -1118,7 +1193,7 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
-        fn search_images(&self, _engines: &[String], _term: &str) -> Result<Vec<SearchResult>> {
+        async fn search_images(&self, _engines: &[String], _term: &str) -> Result<Vec<SearchResult>> {
             Ok(vec![SearchResult {
                 index: "1".into(),
                 name: "search_res".into(),
@@ -1127,19 +1202,19 @@ mod tests {
                 official: "OK".into(),
             }])
         }
-        fn pull_image(&self, _engine: &str, _image: &str) -> Result<()> {
+        async fn pull_image(&self, _engine: &str, _image: &str) -> Result<()> {
             Ok(())
         }
-        fn action_image(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
+        async fn action_image(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
             Ok(())
         }
-        fn action_volume(&self, _engine: &str, _name: &str, _action: &str) -> Result<()> {
+        async fn action_volume(&self, _engine: &str, _name: &str, _action: &str) -> Result<()> {
             Ok(())
         }
-        fn action_network(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
+        async fn action_network(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
             Ok(())
         }
-        fn configure_registries(&self, _registries_csv: &str) -> Result<()> {
+        async fn configure_registries(&self, _registries_csv: &str) -> Result<()> {
             Ok(())
         }
     }
@@ -1152,17 +1227,24 @@ mod tests {
         assert_eq!(app.engine_view, EngineView::Both);
     }
 
-    #[test]
-    fn test_app_update_navigation() {
+    #[tokio::test]
+    async fn test_app_update_navigation() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
         let mut app = App::with_client(Box::new(MockEngine));
-        app.refresh_data();
+        
+        // Simulating data refresh response
+        app.update(Action::DataRefreshed {
+            running: vec![],
+            stopped: vec![],
+            images: vec![],
+            volumes: vec![],
+            networks: vec![],
+        });
 
         assert_eq!(app.selected_index, 0);
         assert_eq!(app.active_tab, Tab::Running);
 
-        // Tab through all panes: Running -> Stopped -> Images -> Volumes -> Networks -> Logs
         app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
         assert_eq!(app.active_tab, Tab::Stopped);
         app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
@@ -1174,29 +1256,18 @@ mod tests {
         app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
         assert!(app.logs_focused);
 
-        // Back out from Logs
         app.update(Action::Key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::empty())));
         assert!(!app.logs_focused);
 
-        // Cycle engine view
         assert_eq!(app.engine_view, EngineView::Both);
         app.update(Action::Key(KeyEvent::new(KeyCode::Char('E'), KeyModifiers::empty())));
         assert_eq!(app.engine_view, EngineView::Docker);
     }
 
     #[test]
-    fn test_app_refresh_data() {
-        let mut app = App::with_client(Box::new(MockEngine));
-        app.refresh_data();
-        assert_eq!(app.running.len(), 1);
-        assert_eq!(app.images.len(), 1);
-        assert_eq!(app.volumes.len(), 1);
-        assert_eq!(app.networks.len(), 1);
-    }
-
-    #[test]
     fn test_app_get_active_engines() {
         let mut app = App::new();
+        app.available_engines = vec!["docker".to_string(), "podman".to_string()];
         app.engine_view = EngineView::Both;
         assert_eq!(app.get_active_engines().len(), 2);
 

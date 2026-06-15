@@ -17,7 +17,7 @@ Lazypod is a modern, responsive Terminal User Interface (TUI) for container mana
 ## Prerequisites
 - **Podman**: Required for core functionality and Podman-specific features.
 - **Docker** (Optional): Supported for viewing and managing Docker resources.
-- **Rust/Cargo**: Required to build the project from source (`cargo version >= 1.70` recommended).
+- **Rust/Cargo**: Required to build the project from source (`cargo version >= 1.75` recommended).
 
 ## Installation & Build
 

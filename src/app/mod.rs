@@ -771,7 +771,11 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('S') | KeyCode::Char('u') => self.handle_action("start"),
+            KeyCode::Char('S') | KeyCode::Char('u') => {
+                if matches!(self.active_tab, Tab::Stopped) {
+                    self.handle_action("start");
+                }
+            }
             KeyCode::Char('d') | KeyCode::Delete => self.handle_action("rm"),
             KeyCode::Enter => self.handle_primary_action(),
             KeyCode::Char('?') => self.show_help_tooltip = true,
@@ -1134,7 +1138,7 @@ impl App {
     fn submit_create_container(&mut self) {
         let form = self.create_container_form.clone().unwrap();
         if let Some(img) = self.images.get(self.selected_index) {
-            let target_engine = self.get_default_target_engine();
+            let target_engine = img.engine.clone();
             let client = self.engine_client.clone();
             let tx = self.action_tx.clone();
             let img_id = img.id.clone();

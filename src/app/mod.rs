@@ -823,44 +823,76 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Ok((cols, rows)) = crossterm::terminal::size() {
-                    let left_panel_width = (cols as f32 * 0.3) as u16;
-                    if mouse.column >= left_panel_width {
+                    use ratatui::layout::{Constraint, Direction, Layout, Rect};
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(3),
+                            Constraint::Min(0),
+                            Constraint::Length(1),
+                        ])
+                        .split(Rect { x: 0, y: 0, width: cols, height: rows });
+                        
+                    let main_chunks = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+                        .split(chunks[1]);
+                        
+                    let panel_chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Percentage(20),
+                            Constraint::Percentage(20),
+                            Constraint::Percentage(20),
+                            Constraint::Percentage(20),
+                            Constraint::Percentage(20),
+                        ])
+                        .split(main_chunks[0]);
+
+                    let click_x = mouse.column;
+                    let click_y = mouse.row;
+
+                    // If clicked in the right panel (details/logs)
+                    if click_x >= main_chunks[1].x && click_x < main_chunks[1].x + main_chunks[1].width 
+                        && click_y >= main_chunks[1].y && click_y < main_chunks[1].y + main_chunks[1].height {
                         if matches!(self.active_tab, Tab::Running | Tab::Stopped) {
                             self.logs_focused = true;
                             if !self.container_logs.is_empty() && self.logs_state.selected().is_none() {
                                 self.logs_state.select(Some(self.container_logs.len().saturating_sub(1)));
                             }
                         }
-                    } else {
+                    } 
+                    // If clicked in the left panel
+                    else if click_x >= main_chunks[0].x && click_x < main_chunks[0].x + main_chunks[0].width 
+                        && click_y >= main_chunks[0].y && click_y < main_chunks[0].y + main_chunks[0].height {
+                        
                         self.logs_focused = false;
                         self.logs_state.select(None);
-                        let available_rows = rows.saturating_sub(1);
-                        let h = available_rows / 5;
 
-                        if mouse.row < h {
+                        if click_y >= panel_chunks[0].y && click_y < panel_chunks[0].y + panel_chunks[0].height {
                             self.active_tab = Tab::Running;
-                            let idx = mouse.row.saturating_sub(1); // 1 for top border
+                            let idx = click_y.saturating_sub(panel_chunks[0].y).saturating_sub(1);
                             let max = self.running.len().saturating_sub(1);
                             self.selected_index = std::cmp::min(idx as usize, max);
                             self.logs_focused = true;
-                        } else if mouse.row < h * 2 {
+                        } else if click_y >= panel_chunks[1].y && click_y < panel_chunks[1].y + panel_chunks[1].height {
                             self.active_tab = Tab::Stopped;
-                            let idx = (mouse.row - h).saturating_sub(1);
+                            let idx = click_y.saturating_sub(panel_chunks[1].y).saturating_sub(1);
                             let max = self.stopped.len().saturating_sub(1);
                             self.selected_index = std::cmp::min(idx as usize, max);
-                        } else if mouse.row < h * 3 {
+                        } else if click_y >= panel_chunks[2].y && click_y < panel_chunks[2].y + panel_chunks[2].height {
                             self.active_tab = Tab::Images;
-                            let idx = (mouse.row - h * 2).saturating_sub(1);
+                            let idx = click_y.saturating_sub(panel_chunks[2].y).saturating_sub(1);
                             let max = self.images.len().saturating_sub(1);
                             self.selected_index = std::cmp::min(idx as usize, max);
-                        } else if mouse.row < h * 4 {
+                        } else if click_y >= panel_chunks[3].y && click_y < panel_chunks[3].y + panel_chunks[3].height {
                             self.active_tab = Tab::Volumes;
-                            let idx = (mouse.row - h * 3).saturating_sub(1);
+                            let idx = click_y.saturating_sub(panel_chunks[3].y).saturating_sub(1);
                             let max = self.volumes.len().saturating_sub(1);
                             self.selected_index = std::cmp::min(idx as usize, max);
-                        } else if mouse.row < available_rows {
+                        } else if click_y >= panel_chunks[4].y && click_y < panel_chunks[4].y + panel_chunks[4].height {
                             self.active_tab = Tab::Networks;
-                            let idx = (mouse.row - h * 4).saturating_sub(1);
+                            let idx = click_y.saturating_sub(panel_chunks[4].y).saturating_sub(1);
                             let max = self.networks.len().saturating_sub(1);
                             self.selected_index = std::cmp::min(idx as usize, max);
                         }

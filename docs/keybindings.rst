@@ -63,3 +63,24 @@ Depending on the active tab and selected item, these bindings execute specific c
      - Open a prompt to pull a specific image directly by name/tag (Images tab).
    * - ``c``
      - Configure local unqualified search registries (Images tab).
+
+Logs Panel Bindings
+-------------------
+When the logs panel is focused (e.g., by pressing ``Right`` or ``Enter`` while on a container tab), the following bindings are active:
+
+.. list-table:: Logs Panel Keybindings
+   :widths: 20 80
+   :header-rows: 1
+
+   * - Key
+     - Action
+   * - ``Up``, ``k``
+     - Scroll up through log lines.
+   * - ``Down``, ``j``
+     - Scroll down through log lines.
+   * - ``y``, ``c``
+     - Copy the currently selected log line to the system clipboard.
+   * - ``Esc``, ``Left``, ``h``
+     - Exit the logs focus mode and return to container selection.
+   * - ``x``, ``e``, ``i``
+     - Open interactive exec/shell prompt for the container.

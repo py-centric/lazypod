@@ -5,7 +5,7 @@ Thank you for your interest in contributing to Lazypod!
 ## Local Development Requirements
 
 To contribute to Lazypod, you'll need the following installed:
-- **Rust / Cargo** (version 1.70 or newer).
+- **Rust / Cargo** (version 1.75 or newer).
 - **Podman** (Docker is optional but recommended if you want to test the Docker-specific views).
 - **Python and Sphinx** (Optional, only if you plan on building the documentation).
 

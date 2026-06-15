@@ -22,7 +22,7 @@ Image Management
 
 Interactive Logs & Shell Execution
 ----------------------------------
-- **Embedded Logs**: View a live, scrollable embedded tail of the logs for the actively selected running or stopped container.
+- **Embedded Logs**: View a live, scrollable embedded log viewer for running or stopped containers. Navigate log lines individually and copy selected log lines directly to your system clipboard (using ``y`` or ``c``).
 - **Custom Exec Commands**: Spawn a temporary subprocess to execute any custom command inside a running container.
 - **Interactive Shell**: Drop immediately into a ``/bin/sh`` or ``/bin/bash`` shell on a running container without breaking your flow.
 

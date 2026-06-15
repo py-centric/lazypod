@@ -5,7 +5,7 @@ Prerequisites
 -------------
 Before installing Lazypod, ensure you have the following installed on your system:
 
-- **Rust and Cargo**: The Rust toolchain is required to build the application from source. You can install it via `rustup <https://rustup.rs/>`_.
+- **Rust and Cargo**: The Rust toolchain is required to build the application from source. You can install it via `rustup <https://rustup.rs/>`_. The Minimum Supported Rust Version (MSRV) is 1.75.
 - **Docker or Podman**: At least one of these container engines must be installed and running. If both are installed, Lazypod can manage both simultaneously.
 
 Building from Source

@@ -3,8 +3,12 @@ name = "lazypod"
 version = "0.1.0"
 edition = "2021"
 authors = ["v <v@example.com>"]
-description = "A terminal UI for Podman"
-license = "MIT"
+description = "A terminal UI for Docker and Podman container management"
+license = "AGPL-3.0-only"
+repository = "https://github.com/py-centric/lazypod"
+homepage = "https://github.com/py-centric/lazypod"
+keywords = ["tui", "docker", "podman", "containers", "terminal"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 ratatui = "0.26"

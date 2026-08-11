@@ -11,13 +11,11 @@ Before installing Lazypod, ensure you have the following installed on your syste
 Building from Source
 --------------------
 
-Currently, Lazypod is available by building it from source. Follow these steps:
-
 1. Clone the repository:
 
 .. code-block:: bash
 
-    git clone https://github.com/yourusername/lazypod.git
+    git clone https://github.com/py-centric/lazypod.git
     cd lazypod
 
 2. Build and run the application:
@@ -26,16 +24,31 @@ Currently, Lazypod is available by building it from source. Follow these steps:
 
     cargo run
 
-3. To install it globally on your system, you can use:
+3. To build an optimized release binary:
+
+.. code-block:: bash
+
+    cargo build --release
+
+The binary will be at ``target/release/lazypod``.
+
+Installing with Cargo
+---------------------
+
+You can install Lazypod globally using Cargo's install command. This compiles the binary and places it in your Cargo bin directory (usually ``~/.cargo/bin``):
 
 .. code-block:: bash
 
     cargo install --path .
 
-This will place the ``lazypod`` executable in your Cargo bin directory (usually ``~/.cargo/bin``), which should be added to your system's PATH.
+Make sure ``~/.cargo/bin`` is on your system's ``PATH``. After installation, you can run ``lazypod`` from anywhere.
 
 Permissions
 -----------
 Depending on your system's configuration for Docker and Podman, you may need to run Lazypod with appropriate permissions.
 - For Docker, ensure your user is part of the ``docker`` group, or you may encounter permission denied errors when Lazypod attempts to fetch container data.
 - Podman is often configured to run rootless, which typically requires no extra permissions.
+
+License
+-------
+Lazypod is licensed under the `GNU Affero General Public License v3.0 <https://www.gnu.org/licenses/agpl-3.0.html>`_ (AGPL-3.0). A separate commercial license is available for organizations that cannot comply with the AGPL-3.0 terms. See the ``LICENSE`` file in the repository root for details.

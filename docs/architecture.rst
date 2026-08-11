@@ -18,28 +18,39 @@ Module Overview
 The source code is organized into discrete functional module directories:
 
 - ``main.rs``: The entry point. Handles setup (enabling raw mode, configuring the terminal) and invokes the application run loop.
-- ``app/``: Contains the core state management logic.
-  - ``mod.rs``: Orchestrates async data refreshes and contains the primary application event loop (``App`` struct).
-  - ``state.rs``: Defines basic application structures like ``Tab`` and ``EngineView``.
-  - ``forms.rs``: Defines text fields for modal user forms.
-- ``ui/``: Responsible strictly for rendering the current application state.
-  - ``mod.rs``: Root rendering coordinates.
-  - ``panels.rs``: Renders left-hand navigation list panels (running, stopped, images, etc.).
-  - ``details.rs``: Renders details panel and stateful list logs.
-  - ``popups.rs``: Renders overlay modals (Help, Search, Confirmation, etc.).
+- ``action.rs``: Defines the ``Action`` enum — the set of all messages that flow through the application (key presses, mouse events, data refreshes, pull completions, inspect results, errors, etc.).
 - ``events.rs``: Provides an abstraction over ``crossterm``'s raw events. It uses a background thread to poll for terminal events (ticks, key presses) and sends them across an mpsc channel to the main tokio thread loop.
+- ``app/``: Contains the core state management logic.
+  - ``mod.rs``: Orchestrates async data refreshes and contains the primary application event loop (``App`` struct). Handles all key and mouse dispatch, triggers background tasks for container engine queries, and manages form state.
+  - ``state.rs``: Defines application enums — ``Tab`` (Running, Stopped, Images, Volumes, Networks, Pods) and ``EngineView`` (Both, Docker, Podman).
+  - ``forms.rs``: Defines text field structures for modal user forms (``CreateContainerForm``, ``SearchImageForm``, ``DirectPullForm``, ``ConfigureRegistriesForm``, ``ExecForm``, ``CreatePodForm``).
+- ``ui/``: Responsible strictly for rendering the current application state.
+  - ``mod.rs``: Root rendering coordinates. Draws the title bar, splits the layout into left panels and right details/logs, and renders the status bar.
+  - ``panels.rs``: Renders left-hand navigation list panels (running, stopped, images, volumes, networks, pods). Each panel highlights when active and shows the engine prefix ``[D]`` or ``[P]``.
+  - ``details.rs``: Renders the details pane (resource metadata) and the stateful log list for the selected container.
+  - ``popups.rs``: Renders overlay modals (Help, Search, Confirmation, Exec, Pull, Create Container, Create Pod, Inspect, etc.).
 - ``podman/``: Contains the ``EngineClient`` trait and its local implementation (``LocalEngines``).
-  - ``mod.rs``: Isolated interaction with the Docker and Podman CLI executables. It executes commands like ``docker ps --format json`` asynchronously, parses standard output, and writes configuration files.
-  - ``models.rs``: Structs representing container entities (e.g., ``Container``, ``Image``) decorated with Serde field name aliases.
+  - ``mod.rs``: Isolated interaction with the Docker and Podman CLI executables. It executes commands like ``docker ps --format json`` asynchronously, parses standard output, and writes configuration files. Implements all engine operations: container CRUD, image pull/search, volume/network management, pod management, and resource inspection.
+  - ``models.rs``: Structs representing container engine entities (``Container``, ``Image``, ``Volume``, ``Network``, ``SearchResult``, ``Pod``, ``PodContainerInfo``) decorated with Serde field name aliases to handle differences between Docker and Podman JSON output formats.
 
 Data Flow
 ---------
 The application follows a unidirectional data flow pattern common in TUI applications:
-1. **Input**: The event loop (``events.rs``) captures user keystrokes or interval ticks.
+1. **Input**: The event loop (``events.rs``) captures user keystrokes, mouse events, or interval ticks.
 2. **Update**: The ``App::update`` method evaluates the action. If it requires a slow external command, it spawns a non-blocking background task (``tokio::spawn``).
-3. **Data Fetching**: Background tasks use the ``EngineClient`` asynchronously to query Docker/Podman, sending the completed payload back via mpsc channels as a ``DataRefreshed``, ``LogsRefreshed``, or ``ActionComplete`` action.
-4. **Render**: The ``App::update`` applies these payloads to the local state, prompting the next rendering cycle in ``ui::draw`` to paint update buffers to the screen.
+3. **Data Fetching**: Background tasks use the ``EngineClient`` asynchronously to query Docker/Podman, sending the completed payload back via mpsc channels as a ``DataRefreshed``, ``LogsRefreshed``, ``InspectResult``, or ``ActionComplete`` action.
+4. **Render**: The ``App::update`` applies these payloads to the local state, prompting the next rendering cycle in ``ui::draw`` to paint updated buffers to the screen.
 
 Container Engine Interoperability
 ---------------------------------
 To support both Podman and Docker seamlessly, Lazypod uses an async interface trait (``EngineClient``). Under the hood, the ``LocalEngines`` struct utilizes ``tokio::process::Command`` to shell out asynchronously to either the ``docker`` or ``podman`` binaries. The JSON returned by these commands is deserialized using structs annotated with ``#[serde(alias = "...")]`` attributes, masking the subtle structural differences between the two engines (e.g., handling both `Id` and `ID` casing natively).
+
+Pod Management
+--------------
+Pod management follows the same pattern as other resources. The ``EngineClient`` trait defines ``get_pods``, ``create_pod``, ``delete_pod``, and ``pod_inspect`` methods. The ``LocalEngines`` implementation calls ``podman pod ls --format json``, ``podman pod create``, ``podman pod rm``, and ``podman pod inspect`` respectively.
+
+The ``Pod`` model (defined in ``podman/models.rs``) includes nested ``PodContainerInfo`` entries representing the containers within each pod. The UI renders pods in their own panel and displays aggregated port and container information in the details pane.
+
+.. note::
+
+   Pod operations are Podman-only. When the engine filter is set to Docker-only, the Pods tab will be empty.

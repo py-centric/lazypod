@@ -17,12 +17,15 @@ This documentation provides an in-depth look at Lazypod's features, how to insta
 Contributing
 ------------
 
-We welcome contributions! Please see our ``CONTRIBUTING.md`` guide located in the repository root for more details on local development, testing, and our required branching strategy.
+We welcome contributions! Please see our ``CONTRIBUTING.md`` guide located in the repository root for more details on local development, testing, branching strategy, and code style requirements. All contributors must sign a Contributor License Agreement (CLA) before their first pull request can be merged.
 
 License
 -------
 
-This project is licensed under the MIT License, an `OSI-approved <https://opensource.org/licenses/MIT>`_ open-source license. See the ``LICENSE`` file for details.
+Lazypod is dual-licensed:
+
+- **Open Source**: `GNU Affero General Public License v3.0 <https://www.gnu.org/licenses/agpl-3.0.html>`_ (AGPL-3.0). See the ``LICENSE`` file for details.
+- **Commercial**: A commercial license is available for organizations that cannot comply with the AGPL-3.0 terms. Contact the maintainers for details.
 
 Indices and tables
 ==================

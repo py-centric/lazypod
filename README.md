@@ -1,5 +1,8 @@
 # Lazypod
 
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![Rust Quality](https://github.com/lazypod/lazypod/actions/workflows/quality.yml/badge.svg)](https://github.com/lazypod/lazypod/actions/workflows/quality.yml)
+
 Lazypod is a modern, responsive Terminal User Interface (TUI) for container management, supporting both **Docker** and **Podman**. Inspired by the interface of [lazydocker](https://github.com/jesseduffield/lazydocker) and the [lazypodman](https://github.com/guillheu/lazypodman) project (which has unfortunately gone stale), it's written in Rust using `ratatui` and `crossterm`.
 
 ## Features
@@ -52,6 +55,32 @@ or use the optimized binary as shown above.
 
 We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) guide for information on local development, testing, and our required branching strategy for automated Semantic Versioning.
 
+All contributors must sign the [Contributor License Agreement](.github/CLA.md) before their pull request can be merged.
+
 ## License
 
-This project is licensed under the [MIT License](LICENSE), an [OSI-approved](https://opensource.org/licenses/MIT) open-source license.
+This project is **dual-licensed**:
+
+### Open Source License
+
+Licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE). You are free to use, modify, and distribute this software under the terms of the AGPL-3.0.
+
+**Key AGPL-3.0 obligations:**
+- If you modify and distribute the software, you must release your modifications under AGPL-3.0
+- If you run a modified version as a network service, you must make the source code available to users of that service
+- All derivative works must be licensed under AGPL-3.0
+
+### Commercial License
+
+If the AGPL-3.0 license terms do not work for your use case (e.g., you want to use Lazypod in proprietary software without open-sourcing your code), a commercial license is available.
+
+**Commercial license benefits:**
+- No obligation to open-source your modifications
+- No network service disclosure requirements
+- Priority support options available
+
+To inquire about commercial licensing, contact: **licensing@lazypod.dev**
+
+---
+
+See the [LICENSE](LICENSE) file for the full AGPL-3.0 license text.

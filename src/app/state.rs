@@ -5,6 +5,7 @@ pub enum Tab {
     Images,
     Volumes,
     Networks,
+    Pods,
 }
 
 #[derive(Default, Clone, PartialEq, Debug)]

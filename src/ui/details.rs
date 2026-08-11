@@ -21,23 +21,37 @@ pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
 
     let info_text = match app.active_tab {
         Tab::Running => app.running.get(app.selected_index).map(|c| {
+            let ports = c.get_port_strings();
+            let ports_str = if ports.is_empty() {
+                String::new()
+            } else {
+                format!("\nPorts: {}", ports.join(", "))
+            };
             format!(
-                "ID: {}\nImage: {}\nCommand: {}\nStatus: {}\nEngine: {}",
+                "ID: {}\nImage: {}\nCommand: {}\nStatus: {}\nEngine:{}{}",
                 c.id,
                 c.image,
                 c.get_command(),
                 c.get_status_str(),
-                c.engine
+                c.engine,
+                ports_str
             )
         }),
         Tab::Stopped => app.stopped.get(app.selected_index).map(|c| {
+            let ports = c.get_port_strings();
+            let ports_str = if ports.is_empty() {
+                String::new()
+            } else {
+                format!("\nPorts: {}", ports.join(", "))
+            };
             format!(
-                "ID: {}\nImage: {}\nCommand: {}\nStatus: {}\nEngine: {}",
+                "ID: {}\nImage: {}\nCommand: {}\nStatus: {}\nEngine:{}{}",
                 c.id,
                 c.image,
                 c.get_command(),
                 c.get_status_str(),
-                c.engine
+                c.engine,
+                ports_str
             )
         }),
         Tab::Images => app.images.get(app.selected_index).map(|i| {
@@ -62,6 +76,35 @@ pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
                 n.name, n.id, n.driver, n.engine
             )
         }),
+        Tab::Pods => app.pods.get(app.selected_index).map(|p| {
+            // Use containers directly from pod ps output
+            let containers_str = if p.containers.is_empty() {
+                "None".to_string()
+            } else {
+                let mut lines = Vec::new();
+                for c in &p.containers {
+                    let name = c.get_name();
+                    let status = c.get_status_str();
+                    lines.push(format!("  {} [{}] {}", name, &c.id[..std::cmp::min(12, c.id.len())], status));
+                }
+                lines.join("\n")
+            };
+            // Aggregate ports from containers in this pod (matched by pod_id in container list)
+            let all_ports: Vec<String> = app.running.iter()
+                .chain(app.stopped.iter())
+                .filter(|c| c.pod_id.as_deref() == Some(&p.id))
+                .flat_map(|c| c.get_port_strings())
+                .collect();
+            let ports_str = if all_ports.is_empty() {
+                String::new()
+            } else {
+                format!("\nPorts: {}", all_ports.join(", "))
+            };
+            format!(
+                "Name: {}\nID: {}\nStatus: {}\nCreated: {}\nEngine: {}\nContainers:\n{}{}",
+                p.name, p.id, p.status, p.get_created_str(), p.engine, containers_str, ports_str
+            )
+        }),
     }
     .unwrap_or_else(|| "Nothing selected.".to_string());
 
@@ -76,6 +119,8 @@ pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
 
     let title = if app.logs_focused {
         " Logs (Press 'y' to copy line, 'Esc' to exit) "
+    } else if matches!(app.active_tab, Tab::Pods) {
+        " Pod Logs "
     } else {
         " Logs "
     };
@@ -85,7 +130,7 @@ pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(logs_border_style);
 
-    if matches!(app.active_tab, Tab::Running | Tab::Stopped) {
+    if matches!(app.active_tab, Tab::Running | Tab::Stopped | Tab::Pods) {
         let items: Vec<ListItem> = app
             .container_logs
             .iter()
@@ -102,7 +147,11 @@ pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
             
         f.render_stateful_widget(list, chunks[1], &mut app.logs_state);
     } else {
-        let p = Paragraph::new("Logs only available for containers.")
+        let hint = match app.active_tab {
+            Tab::Pods => "Logs not available for pods. Select a container.",
+            _ => "Logs only available for containers.",
+        };
+        let p = Paragraph::new(hint)
             .block(logs_block)
             .wrap(Wrap { trim: true });
         f.render_widget(p, chunks[1]);

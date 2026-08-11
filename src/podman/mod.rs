@@ -1,7 +1,8 @@
 pub mod models;
 
 use anyhow::Result;
-pub use models::{Container, Image, Network, SearchResult, Volume};
+#[allow(unused_imports)]
+pub use models::{Container, Image, Network, Pod, PodContainer, PortMapping, SearchResult, Volume};
 use tokio::process::Command;
 
 #[async_trait::async_trait]
@@ -10,7 +11,12 @@ pub trait EngineClient: Send + Sync {
     async fn get_images(&self, engines: &[String]) -> Result<Vec<Image>>;
     async fn get_volumes(&self, engines: &[String]) -> Result<Vec<Volume>>;
     async fn get_networks(&self, engines: &[String]) -> Result<Vec<Network>>;
+    async fn get_pods(&self, engines: &[String]) -> Result<Vec<Pod>>;
     async fn action_container(&self, engine: &str, id: &str, action: &str) -> Result<()>;
+    async fn action_image(&self, engine: &str, id: &str, action: &str) -> Result<()>;
+    async fn action_volume(&self, engine: &str, name: &str, action: &str) -> Result<()>;
+    async fn action_network(&self, engine: &str, id: &str, action: &str) -> Result<()>;
+    async fn action_pod(&self, engine: &str, id: &str, action: &str) -> Result<()>;
     async fn run_container(
         &self,
         engine: &str,
@@ -20,12 +26,18 @@ pub trait EngineClient: Send + Sync {
         env: &str,
         command: &str,
     ) -> Result<()>;
+    async fn create_pod(
+        &self,
+        engine: &str,
+        name: &str,
+        network: &str,
+        share: &str,
+    ) -> Result<()>;
     async fn search_images(&self, engines: &[String], term: &str) -> Result<Vec<SearchResult>>;
     async fn pull_image(&self, engine: &str, image: &str) -> Result<()>;
-    async fn action_image(&self, engine: &str, id: &str, action: &str) -> Result<()>;
-    async fn action_volume(&self, engine: &str, name: &str, action: &str) -> Result<()>;
-    async fn action_network(&self, engine: &str, id: &str, action: &str) -> Result<()>;
     async fn get_container_logs(&self, engine: &str, id: &str) -> Result<Vec<String>>;
+    async fn get_pod_logs(&self, engine: &str, pod_id: &str) -> Result<Vec<String>>;
+    async fn get_container_inspect(&self, engine: &str, id: &str) -> Result<String>;
     async fn configure_registries(&self, registries_csv: &str) -> Result<()>;
 }
 
@@ -36,10 +48,13 @@ impl EngineClient for LocalEngines {
     async fn get_containers(&self, engines: &[String]) -> Result<Vec<Container>> {
         let mut all_containers = Vec::new();
         for engine in engines {
-            let output = Command::new(engine)
-                .args(["ps", "-a", "--format", "json"])
-                .output()
-                .await;
+            let mut cmd = Command::new(engine);
+            cmd.args(["ps", "-a", "--format", "json"]);
+            // Podman: include --pod flag so PodID field is populated
+            if engine == "podman" {
+                cmd.arg("--pod");
+            }
+            let output = cmd.output().await;
 
             if let Ok(out) = output {
                 if out.status.success() {
@@ -48,6 +63,11 @@ impl EngineClient for LocalEngines {
                         item.engine = engine.clone();
                     }
                     all_containers.extend(parsed);
+                } else {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    if !stderr.trim().is_empty() {
+                        return Err(anyhow::anyhow!("{}: {}", engine, stderr.trim()));
+                    }
                 }
             }
         }
@@ -69,6 +89,11 @@ impl EngineClient for LocalEngines {
                         item.engine = engine.clone();
                     }
                     all_images.extend(parsed);
+                } else {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    if !stderr.trim().is_empty() {
+                        return Err(anyhow::anyhow!("{}: {}", engine, stderr.trim()));
+                    }
                 }
             }
         }
@@ -90,6 +115,11 @@ impl EngineClient for LocalEngines {
                         item.engine = engine.clone();
                     }
                     all_volumes.extend(parsed);
+                } else {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    if !stderr.trim().is_empty() {
+                        return Err(anyhow::anyhow!("{}: {}", engine, stderr.trim()));
+                    }
                 }
             }
         }
@@ -111,29 +141,89 @@ impl EngineClient for LocalEngines {
                         item.engine = engine.clone();
                     }
                     all_networks.extend(parsed);
+                } else {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    if !stderr.trim().is_empty() {
+                        return Err(anyhow::anyhow!("{}: {}", engine, stderr.trim()));
+                    }
                 }
             }
         }
         Ok(all_networks)
     }
 
+    async fn get_pods(&self, engines: &[String]) -> Result<Vec<Pod>> {
+        let mut all_pods = Vec::new();
+        for engine in engines {
+            // Docker doesn't have native pod support; only Podman does
+            if engine == "docker" {
+                continue;
+            }
+            let output = Command::new(engine)
+                .args(["pod", "ps", "--format", "json"])
+                .output()
+                .await;
+
+            if let Ok(out) = output {
+                if out.status.success() {
+                    let mut parsed: Vec<Pod> = parse_json_output(&out.stdout);
+                    for item in &mut parsed {
+                        item.engine = engine.clone();
+                    }
+                    all_pods.extend(parsed);
+                } else {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    if !stderr.trim().is_empty() {
+                        return Err(anyhow::anyhow!("{}: {}", engine, stderr.trim()));
+                    }
+                }
+            }
+        }
+        Ok(all_pods)
+    }
+
     async fn action_container(&self, engine: &str, id: &str, action: &str) -> Result<()> {
-        Command::new(engine).args([action, id]).output().await?;
+        let output = Command::new(engine).args([action, id]).output().await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to {} container {}: {}", action, id, stderr.trim()));
+        }
         Ok(())
     }
 
     async fn action_image(&self, engine: &str, id: &str, action: &str) -> Result<()> {
-        Command::new(engine).args(["image", action, id]).output().await?;
+        let output = Command::new(engine).args(["image", action, id]).output().await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to {} image {}: {}", action, id, stderr.trim()));
+        }
         Ok(())
     }
 
     async fn action_volume(&self, engine: &str, name: &str, action: &str) -> Result<()> {
-        Command::new(engine).args(["volume", action, name]).output().await?;
+        let output = Command::new(engine).args(["volume", action, name]).output().await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to {} volume {}: {}", action, name, stderr.trim()));
+        }
         Ok(())
     }
 
     async fn action_network(&self, engine: &str, id: &str, action: &str) -> Result<()> {
-        Command::new(engine).args(["network", action, id]).output().await?;
+        let output = Command::new(engine).args(["network", action, id]).output().await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to {} network {}: {}", action, id, stderr.trim()));
+        }
+        Ok(())
+    }
+
+    async fn action_pod(&self, engine: &str, id: &str, action: &str) -> Result<()> {
+        let output = Command::new(engine).args(["pod", action, id]).output().await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to {} pod {}: {}", action, id, stderr.trim()));
+        }
         Ok(())
     }
 
@@ -182,6 +272,39 @@ impl EngineClient for LocalEngines {
         Ok(())
     }
 
+    async fn create_pod(
+        &self,
+        engine: &str,
+        name: &str,
+        network: &str,
+        share: &str,
+    ) -> Result<()> {
+        let mut cmd = Command::new(engine);
+        cmd.arg("pod").arg("create");
+
+        let name = name.trim();
+        if !name.is_empty() {
+            cmd.arg("--name").arg(name);
+        }
+
+        let network = network.trim();
+        if !network.is_empty() {
+            cmd.arg("--network").arg(network);
+        }
+
+        let share = share.trim();
+        if !share.is_empty() {
+            cmd.arg("--share").arg(share);
+        }
+
+        let output = cmd.output().await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to create pod: {}", stderr.trim()));
+        }
+        Ok(())
+    }
+
     async fn search_images(&self, engines: &[String], term: &str) -> Result<Vec<SearchResult>> {
         let mut all_results = Vec::new();
         for engine in engines {
@@ -222,6 +345,44 @@ impl EngineClient for LocalEngines {
             logs.push(line.to_string());
         }
         Ok(logs)
+    }
+
+    async fn get_pod_logs(&self, engine: &str, pod_id: &str) -> Result<Vec<String>> {
+        let output = Command::new(engine)
+            .args(["pod", "logs", "--tail", "50", pod_id])
+            .output()
+            .await?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        let mut logs = Vec::new();
+        for line in stdout.lines() {
+            logs.push(line.to_string());
+        }
+        for line in stderr.lines() {
+            logs.push(line.to_string());
+        }
+        Ok(logs)
+    }
+
+    async fn get_container_inspect(&self, engine: &str, id: &str) -> Result<String> {
+        let output = Command::new(engine)
+            .args(["inspect", id])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to inspect {}: {}", id, stderr.trim()));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Try to pretty-print the JSON
+        match serde_json::from_str::<serde_json::Value>(&stdout) {
+            Ok(val) => Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| stdout.to_string())),
+            Err(_) => Ok(stdout.to_string()),
+        }
     }
 
     async fn configure_registries(&self, registries_csv: &str) -> Result<()> {
@@ -341,6 +502,8 @@ mod tests {
             status: None,
             names: Some(serde_json::Value::Array(vec!["names_entry".into()])),
             name: Some("name_entry".into()),
+            ports: None,
+            pod_id: None,
             engine: "test".into(),
         };
         assert_eq!(c.get_names(), vec!["name_entry"]);
@@ -366,6 +529,8 @@ mod tests {
             status: None,
             names: None,
             name: None,
+            ports: None,
+            pod_id: None,
             engine: "test".into(),
         };
         assert_eq!(c.get_command(), "ls -l");
@@ -388,6 +553,8 @@ mod tests {
             status: None,
             names: None,
             name: None,
+            ports: None,
+            pod_id: None,
             engine: "test".into(),
         };
         assert_eq!(c.get_status_str(), "");
@@ -405,6 +572,8 @@ mod tests {
             status: None,
             names: None,
             name: None,
+            ports: None,
+            pod_id: None,
             engine: "test".into(),
         };
         assert!(c.is_running());
@@ -418,6 +587,117 @@ mod tests {
 
         c.status = Some(serde_json::Value::String("Exited (0)".into()));
         assert!(!c.is_running());
+    }
+
+    #[test]
+    fn test_container_get_ports() {
+        use crate::podman::models::PortMapping;
+
+        // Test array format (Docker-style)
+        let c = Container {
+            id: "1".into(),
+            image: "test".into(),
+            command: None,
+            created: None,
+            state: None,
+            status: None,
+            names: None,
+            name: None,
+            ports: Some(serde_json::json!([
+                { "IP": "0.0.0.0", "PrivatePort": 80, "PublicPort": 8080, "Type": "tcp" }
+            ])),
+            pod_id: None,
+            engine: "test".into(),
+        };
+        let ports = c.get_ports();
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0], PortMapping {
+            host_ip: "0.0.0.0".into(),
+            host_port: 8080,
+            container_port: 80,
+            protocol: "tcp".into(),
+        });
+
+        // Test string format (Podman-style)
+        let c2 = Container {
+            id: "2".into(),
+            image: "test".into(),
+            command: None,
+            created: None,
+            state: None,
+            status: None,
+            names: None,
+            name: None,
+            ports: Some(serde_json::Value::String("0.0.0.0:8080->80/tcp".into())),
+            pod_id: None,
+            engine: "test".into(),
+        };
+        let ports2 = c2.get_ports();
+        assert_eq!(ports2.len(), 1);
+        assert_eq!(ports2[0], PortMapping {
+            host_ip: "0.0.0.0".into(),
+            host_port: 8080,
+            container_port: 80,
+            protocol: "tcp".into(),
+        });
+
+        // Test multiple ports with IPv6
+        let c3 = Container {
+            id: "3".into(),
+            image: "test".into(),
+            command: None,
+            created: None,
+            state: None,
+            status: None,
+            names: None,
+            name: None,
+            ports: Some(serde_json::Value::String("0.0.0.0:8080->80/tcp, :::9090->9090/tcp".into())),
+            pod_id: None,
+            engine: "test".into(),
+        };
+        let ports3 = c3.get_ports();
+        assert_eq!(ports3.len(), 2);
+        assert_eq!(ports3[1].host_port, 9090);
+        assert_eq!(ports3[1].container_port, 9090);
+
+        // Test exposed-only port (no host binding)
+        let c4 = Container {
+            id: "4".into(),
+            image: "test".into(),
+            command: None,
+            created: None,
+            state: None,
+            status: None,
+            names: None,
+            name: None,
+            ports: Some(serde_json::Value::String("80/tcp".into())),
+            pod_id: None,
+            engine: "test".into(),
+        };
+        let ports4 = c4.get_ports();
+        assert_eq!(ports4.len(), 1);
+        assert_eq!(ports4[0].host_port, 0);
+        assert_eq!(ports4[0].container_port, 80);
+
+        // Test no ports
+        let c5 = Container {
+            id: "5".into(),
+            image: "test".into(),
+            command: None,
+            created: None,
+            state: None,
+            status: None,
+            names: None,
+            name: None,
+            ports: None,
+            pod_id: None,
+            engine: "test".into(),
+        };
+        assert!(c5.get_ports().is_empty());
+
+        // Test get_port_strings convenience
+        let strings = c.get_port_strings();
+        assert_eq!(strings, vec!["0.0.0.0:8080->80tcp"]);
     }
 
     #[test]

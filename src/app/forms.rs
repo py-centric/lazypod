@@ -31,3 +31,12 @@ pub struct ConfigureRegistriesForm {
 pub struct ExecForm {
     pub command: String,
 }
+
+#[derive(Default, Clone)]
+pub struct CreatePodForm {
+    pub name: String,
+    pub network: String,
+    pub share_pid: bool,
+    pub share_net: bool,
+    pub active_field: usize, // 0: Name, 1: Network, 2: Share PID, 3: Share Net
+}

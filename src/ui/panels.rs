@@ -12,11 +12,12 @@ pub fn draw_panels(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
+            Constraint::Percentage(17),
+            Constraint::Percentage(17),
+            Constraint::Percentage(17),
+            Constraint::Percentage(17),
+            Constraint::Percentage(16),
+            Constraint::Percentage(16),
         ])
         .split(area);
 
@@ -34,6 +35,9 @@ pub fn draw_panels(f: &mut Frame, app: &mut App, area: Rect) {
 
     let (n_items, n_state) = prepare_network_list(app);
     f.render_stateful_widget(n_items, chunks[4], &mut n_state.clone());
+
+    let (p_items, p_state) = prepare_pods_list(app);
+    f.render_stateful_widget(p_items, chunks[5], &mut p_state.clone());
 }
 
 fn prepare_running_list(app: &App) -> (List<'static>, ListState) {
@@ -237,6 +241,46 @@ fn prepare_network_list(app: &App) -> (List<'static>, ListState) {
 
     let mut state = ListState::default();
     if matches!(app.active_tab, Tab::Networks) && !app.networks.is_empty() {
+        state.select(Some(app.selected_index));
+    }
+    (list, state)
+}
+
+fn prepare_pods_list(app: &App) -> (List<'static>, ListState) {
+    let items: Vec<ListItem> = app
+        .pods
+        .iter()
+        .map(|p| {
+            let prefix = if p.engine == "docker" { "[D] " } else { "[P] " };
+            ListItem::new(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(Color::Blue)),
+                Span::raw(format!("{} ({})", p.name, &p.id[..std::cmp::min(12, p.id.len())])),
+            ]))
+        })
+        .collect();
+
+    let title = format!(" Pods ({}) ", app.pods.len());
+    let border_style = if matches!(app.active_tab, Tab::Pods) && !app.logs_focused {
+        Style::default().fg(Color::LightGreen)
+    } else {
+        Style::default()
+    };
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(border_style),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let mut state = ListState::default();
+    if matches!(app.active_tab, Tab::Pods) && !app.pods.is_empty() {
         state.select(Some(app.selected_index));
     }
     (list, state)

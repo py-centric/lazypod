@@ -2,13 +2,34 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
     Frame,
 };
 
 use crate::app::App;
 
 pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
+    if let Some(inspect_output) = &app.inspect_popup {
+        let block = Block::default()
+            .title(" Inspect (Esc/g to close, j/k to scroll) ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD));
+
+        let lines: Vec<Line> = inspect_output
+            .lines()
+            .map(|l| Line::from(l.to_string()))
+            .collect();
+
+        let p = Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false })
+            .scroll((app.inspect_scroll, 0));
+        let popup_area = centered_rect(80, 80, area);
+        f.render_widget(Clear, popup_area);
+        f.render_widget(p, popup_area);
+        return;
+    }
+
     if app.show_help_tooltip {
         let block = Block::default()
             .title(" Help ")
@@ -22,6 +43,7 @@ pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
             Line::from("  BackTab    Previous panel"),
             Line::from("  E          Toggle engine (Both/Docker/Podman)"),
             Line::from("  r          Refresh data"),
+            Line::from("  g          Inspect selected resource"),
             Line::from(""),
             Line::from("List Bindings:"),
             Line::from("  Up/Down    Navigate list"),
@@ -37,13 +59,18 @@ pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
             Line::from("  p          Pull an image directly"),
             Line::from("  c          Configure unqualified registries"),
             Line::from(""),
+            Line::from("Pods Tab:"),
+            Line::from("  P          Create a new pod"),
+            Line::from("  s          Stop/Start pod"),
+            Line::from("  d/Del      Remove pod"),
+            Line::from(""),
             Line::from("Logs Panel:"),
             Line::from("  Up/Down    Scroll logs"),
             Line::from("  y/c        Copy selected log line to clipboard"),
             Line::from("  Esc        Exit logs focus"),
         ];
         let p = Paragraph::new(help_text).block(block).alignment(Alignment::Left);
-        let popup_area = centered_rect(50, 60, area);
+        let popup_area = centered_rect(50, 65, area);
         f.render_widget(Clear, popup_area);
         f.render_widget(p, popup_area);
         return;
@@ -148,6 +175,59 @@ pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
             let list = List::new(items).block(Block::default().borders(Borders::TOP));
             f.render_widget(list, chunks[1]);
         }
+        return;
+    }
+
+    if let Some(form) = &app.create_pod_form {
+        let block = Block::default()
+            .title(" Create Pod ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let pid_marker = if form.share_pid { "[x]" } else { "[ ]" };
+        let net_marker = if form.share_net { "[x]" } else { "[ ]" };
+
+        let text = vec![
+            Line::from(Span::styled(
+                format!("Name: {}", form.name),
+                if form.active_field == 0 {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                },
+            )),
+            Line::from(Span::styled(
+                format!("Network: {}", form.network),
+                if form.active_field == 1 {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                },
+            )),
+            Line::from(Span::styled(
+                format!("Share PID: {} (Space to toggle)", pid_marker),
+                if form.active_field == 2 {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                },
+            )),
+            Line::from(Span::styled(
+                format!("Share Net: {} (Space to toggle)", net_marker),
+                if form.active_field == 3 {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                },
+            )),
+            Line::from(""),
+            Line::from("(Tab to switch fields, Enter to create, Esc to cancel)"),
+        ];
+
+        let p = Paragraph::new(text).block(block);
+        let popup_area = centered_rect(50, 40, area);
+        f.render_widget(Clear, popup_area);
+        f.render_widget(p, popup_area);
         return;
     }
 

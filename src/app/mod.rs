@@ -8,7 +8,7 @@ use crossterm::event::KeyCode;
 
 use crate::action::Action;
 use crate::events::EventHandler;
-use crate::podman::{Container, EngineClient, Image, LocalEngines, Network, Volume};
+use crate::podman::{Container, EngineClient, Image, LocalEngines, Network, Pod, Volume};
 use crate::ui;
 pub use forms::*;
 pub use state::{EngineView, Tab};
@@ -22,12 +22,14 @@ pub struct App {
     pub images: Vec<Image>,
     pub volumes: Vec<Volume>,
     pub networks: Vec<Network>,
+    pub pods: Vec<Pod>,
     pub selected_index: usize,
     pub running_index: usize,
     pub stopped_index: usize,
     pub images_index: usize,
     pub volumes_index: usize,
     pub networks_index: usize,
+    pub pods_index: usize,
     pub show_confirmation: bool,
     pub create_container_form: Option<CreateContainerForm>,
     pub search_image_form: Option<SearchImageForm>,
@@ -45,6 +47,10 @@ pub struct App {
     pub pending_action: Option<(Tab, String, String, String)>,
     pub available_engines: Vec<String>,
     pub action_tx: Option<mpsc::UnboundedSender<Action>>,
+    pub status_message: Option<String>,
+    pub inspect_popup: Option<String>,
+    pub inspect_scroll: u16,
+    pub create_pod_form: Option<CreatePodForm>,
 }
 
 impl App {
@@ -66,12 +72,14 @@ impl App {
             images: Vec::new(),
             volumes: Vec::new(),
             networks: Vec::new(),
+            pods: Vec::new(),
             selected_index: 0,
             running_index: 0,
             stopped_index: 0,
             images_index: 0,
             volumes_index: 0,
             networks_index: 0,
+            pods_index: 0,
             show_confirmation: false,
             create_container_form: None,
             search_image_form: None,
@@ -89,6 +97,10 @@ impl App {
             pending_action: None,
             available_engines,
             action_tx: None,
+            status_message: None,
+            inspect_popup: None,
+            inspect_scroll: 0,
+            create_pod_form: None,
         }
     }
 
@@ -115,9 +127,140 @@ impl App {
             .unwrap_or_else(|| "docker".into())
     }
 
+    // --- Extracted navigation helpers (used in future refactoring) ---
+
+    #[allow(dead_code)]
+    fn get_tab_list(&self) -> Vec<Tab> {
+        vec![
+            Tab::Running,
+            Tab::Stopped,
+            Tab::Images,
+            Tab::Volumes,
+            Tab::Networks,
+            Tab::Pods,
+        ]
+    }
+
+    #[allow(dead_code)]
+    fn next_tab(&mut self) {
+        let tabs = self.get_tab_list();
+        if let Some(pos) = tabs.iter().position(|t| *t == self.active_tab) {
+            let next_pos = (pos + 1) % tabs.len();
+            self.switch_to_tab(tabs[next_pos].clone());
+        }
+    }
+
+    #[allow(dead_code)]
+    fn prev_tab(&mut self) {
+        let tabs = self.get_tab_list();
+        if let Some(pos) = tabs.iter().position(|t| *t == self.active_tab) {
+            let prev_pos = if pos == 0 { tabs.len() - 1 } else { pos - 1 };
+            self.switch_to_tab(tabs[prev_pos].clone());
+        }
+    }
+
+    #[allow(dead_code)]
+    fn switch_to_tab(&mut self, new_tab: Tab) {
+        // Save current index
+        self.save_current_index();
+        // Switch tab
+        self.active_tab = new_tab;
+        // Load new index
+        self.load_current_index();
+        // Clear logs focus
+        self.logs_focused = false;
+        self.logs_state.select(None);
+        self.trigger_fetch_logs();
+    }
+
+    fn save_current_index(&mut self) {
+        match self.active_tab {
+            Tab::Running => self.running_index = self.selected_index,
+            Tab::Stopped => self.stopped_index = self.selected_index,
+            Tab::Images => self.images_index = self.selected_index,
+            Tab::Volumes => self.volumes_index = self.selected_index,
+            Tab::Networks => self.networks_index = self.selected_index,
+            Tab::Pods => self.pods_index = self.selected_index,
+        }
+    }
+
+    fn load_current_index(&mut self) {
+        self.selected_index = match self.active_tab {
+            Tab::Running => self.running_index,
+            Tab::Stopped => self.stopped_index,
+            Tab::Images => self.images_index,
+            Tab::Volumes => self.volumes_index,
+            Tab::Networks => self.networks_index,
+            Tab::Pods => self.pods_index,
+        };
+    }
+
+    fn get_list_len_for_tab(&self, tab: &Tab) -> usize {
+        match tab {
+            Tab::Running => self.running.len(),
+            Tab::Stopped => self.stopped.len(),
+            Tab::Images => self.images.len(),
+            Tab::Volumes => self.volumes.len(),
+            Tab::Networks => self.networks.len(),
+            Tab::Pods => self.pods.len(),
+        }
+    }
+
+    fn get_selected_resource(&self) -> Option<(Tab, String, String)> {
+        match self.active_tab {
+            Tab::Running | Tab::Stopped => {
+                let list = if self.active_tab == Tab::Running { &self.running } else { &self.stopped };
+                list.get(self.selected_index)
+                    .map(|c| (self.active_tab.clone(), c.engine.clone(), c.id.clone()))
+            }
+            Tab::Images => {
+                self.images.get(self.selected_index)
+                    .map(|i| (Tab::Images, i.engine.clone(), i.id.clone()))
+            }
+            Tab::Volumes => {
+                self.volumes.get(self.selected_index)
+                    .map(|v| (Tab::Volumes, v.engine.clone(), v.name.clone()))
+            }
+            Tab::Networks => {
+                self.networks.get(self.selected_index)
+                    .map(|n| (Tab::Networks, n.engine.clone(), n.id.clone()))
+            }
+            Tab::Pods => {
+                self.pods.get(self.selected_index)
+                    .map(|p| (Tab::Pods, p.engine.clone(), p.id.clone()))
+            }
+        }
+    }
+
+    fn spawn_resource_action(&self, tab: Tab, engine: String, id: String, action: String) {
+        let client = self.engine_client.clone();
+        let tx = self.action_tx.clone();
+        tokio::spawn(async move {
+            let result = match tab {
+                Tab::Running | Tab::Stopped => client.action_container(&engine, &id, &action).await,
+                Tab::Images => client.action_image(&engine, &id, &action).await,
+                Tab::Volumes => client.action_volume(&engine, &id, &action).await,
+                Tab::Networks => client.action_network(&engine, &id, &action).await,
+                Tab::Pods => client.action_pod(&engine, &id, &action).await,
+            };
+            if let Some(tx) = tx {
+                match result {
+                    Ok(()) => { let _ = tx.send(Action::ActionComplete); }
+                    Err(e) => { let _ = tx.send(Action::Error { message: e.to_string() }); }
+                }
+            }
+        });
+    }
+
+    fn propagate_error(&mut self, message: String) {
+        self.status_message = Some(message);
+    }
+
+    // --- End extracted helpers ---
+
     pub async fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
         let mut events = EventHandler::new(250);
-        self.action_tx = Some(events._sender.clone());
+        self.action_tx = Some(events.sender.clone());
 
         self.trigger_refresh_data();
 
@@ -165,7 +308,7 @@ impl App {
                 terminal.clear()?;
 
                 events = EventHandler::new(250);
-                self.action_tx = Some(events._sender.clone());
+                self.action_tx = Some(events.sender.clone());
                 self.trigger_refresh_data();
             }
         }
@@ -177,30 +320,24 @@ impl App {
         match action {
             Action::Quit => {
                 self.should_quit = true;
-                return;
             }
-            Action::Tick => return,
-            Action::DataRefreshed { running, stopped, images, volumes, networks } => {
+            Action::Tick => (),
+            Action::DataRefreshed { running, stopped, images, volumes, networks, pods } => {
                 self.running = running;
                 self.stopped = stopped;
                 self.images = images;
                 self.volumes = volumes;
                 self.networks = networks;
+                self.pods = pods;
                 self.running_index = std::cmp::min(self.running_index, self.running.len().saturating_sub(1));
                 self.stopped_index = std::cmp::min(self.stopped_index, self.stopped.len().saturating_sub(1));
                 self.images_index = std::cmp::min(self.images_index, self.images.len().saturating_sub(1));
                 self.volumes_index = std::cmp::min(self.volumes_index, self.volumes.len().saturating_sub(1));
                 self.networks_index = std::cmp::min(self.networks_index, self.networks.len().saturating_sub(1));
+                self.pods_index = std::cmp::min(self.pods_index, self.pods.len().saturating_sub(1));
 
-                self.selected_index = match self.active_tab {
-                    Tab::Running => self.running_index,
-                    Tab::Stopped => self.stopped_index,
-                    Tab::Images => self.images_index,
-                    Tab::Volumes => self.volumes_index,
-                    Tab::Networks => self.networks_index,
-                };
+                self.load_current_index();
                 self.trigger_fetch_logs();
-                return;
             }
             Action::LogsRefreshed { logs } => {
                 self.container_logs = logs;
@@ -216,7 +353,6 @@ impl App {
                 } else {
                     self.logs_state.select(None);
                 }
-                return;
             }
             Action::SearchResults { results } => {
                 if let Some(form) = &mut self.search_image_form {
@@ -224,18 +360,23 @@ impl App {
                     form.selected = 0;
                     form.is_searching = false;
                 }
-                return;
+            }
+            Action::InspectResult { output } => {
+                self.inspect_popup = Some(output);
+                self.inspect_scroll = 0;
             }
             Action::PullComplete => {
                 self.is_pulling = false;
                 self.direct_pull_form = None;
                 self.search_image_form = None;
                 self.trigger_refresh_data();
-                return;
             }
             Action::ActionComplete => {
+                self.status_message = None;
                 self.trigger_refresh_data();
-                return;
+            }
+            Action::Error { message } => {
+                self.propagate_error(message);
             }
             Action::Key(k) => self.handle_key(k),
             Action::Mouse(m) => self.handle_mouse(m),
@@ -243,6 +384,70 @@ impl App {
     }
 
     fn handle_key(&mut self, key: crossterm::event::KeyEvent) {
+        // Inspect popup takes priority
+        if self.inspect_popup.is_some() {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('g') | KeyCode::Char('q') => {
+                    self.inspect_popup = None;
+                    self.inspect_scroll = 0;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.inspect_scroll = self.inspect_scroll.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let total_lines = self.inspect_popup.as_ref()
+                        .map(|s| s.lines().count() as u16)
+                        .unwrap_or(0);
+                    let max_scroll = total_lines.saturating_sub(1);
+                    if self.inspect_scroll < max_scroll {
+                        self.inspect_scroll += 1;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Create pod form
+        if let Some(form) = &mut self.create_pod_form {
+            match key.code {
+                KeyCode::Esc => self.create_pod_form = None,
+                KeyCode::Enter => {
+                    self.submit_create_pod();
+                    self.create_pod_form = None;
+                }
+                KeyCode::Tab | KeyCode::Down => {
+                    form.active_field = (form.active_field + 1) % 4;
+                }
+                KeyCode::BackTab | KeyCode::Up => {
+                    form.active_field = form.active_field.checked_sub(1).unwrap_or(3);
+                }
+                KeyCode::Backspace => {
+                    match form.active_field {
+                        0 => { form.name.pop(); }
+                        1 => { form.network.pop(); }
+                        _ => {}
+                    }
+                }
+                KeyCode::Char(' ') => {
+                    match form.active_field {
+                        2 => { form.share_pid = !form.share_pid; }
+                        3 => { form.share_net = !form.share_net; }
+                        _ => {}
+                    }
+                }
+                KeyCode::Char(c) => {
+                    match form.active_field {
+                        0 => form.name.push(c),
+                        1 => form.network.push(c),
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
         if self.show_help_tooltip {
             if matches!(key.code, KeyCode::Char('?') | KeyCode::Esc | KeyCode::Enter) {
                 self.show_help_tooltip = false;
@@ -543,67 +748,58 @@ impl App {
                     self.active_tab = Tab::Running;
                     self.selected_index = self.running_index;
                 } else {
+                    self.save_current_index();
                     match self.active_tab {
                         Tab::Running => {
-                            self.running_index = self.selected_index;
                             self.active_tab = Tab::Stopped;
-                            self.selected_index = self.stopped_index;
                         }
                         Tab::Stopped => {
-                            self.stopped_index = self.selected_index;
                             self.active_tab = Tab::Images;
-                            self.selected_index = self.images_index;
                         }
                         Tab::Images => {
-                            self.images_index = self.selected_index;
                             self.active_tab = Tab::Volumes;
-                            self.selected_index = self.volumes_index;
                         }
                         Tab::Volumes => {
-                            self.volumes_index = self.selected_index;
                             self.active_tab = Tab::Networks;
-                            self.selected_index = self.networks_index;
                         }
                         Tab::Networks => {
-                            self.networks_index = self.selected_index;
+                            self.active_tab = Tab::Pods;
+                        }
+                        Tab::Pods => {
                             self.logs_focused = true;
                         }
                     }
+                    self.load_current_index();
                 }
                 self.trigger_fetch_logs();
             }
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('L') => {
-                if matches!(self.active_tab, Tab::Running | Tab::Stopped) {
+                if matches!(self.active_tab, Tab::Running | Tab::Stopped | Tab::Pods) {
                     self.logs_focused = true;
                     return;
                 }
+                self.save_current_index();
                 match self.active_tab {
                     Tab::Running => {
-                        self.running_index = self.selected_index;
                         self.active_tab = Tab::Stopped;
-                        self.selected_index = self.stopped_index;
                     }
                     Tab::Stopped => {
-                        self.stopped_index = self.selected_index;
                         self.active_tab = Tab::Images;
-                        self.selected_index = self.images_index;
                     }
                     Tab::Images => {
-                        self.images_index = self.selected_index;
                         self.active_tab = Tab::Volumes;
-                        self.selected_index = self.volumes_index;
                     }
                     Tab::Volumes => {
-                        self.volumes_index = self.selected_index;
                         self.active_tab = Tab::Networks;
-                        self.selected_index = self.networks_index;
                     }
                     Tab::Networks => {
-                        self.networks_index = self.selected_index;
+                        self.active_tab = Tab::Pods;
+                    }
+                    Tab::Pods => {
                         self.active_tab = Tab::Running;
-                        self.selected_index = self.running_index;
                     }
                 };
+                self.load_current_index();
                 self.trigger_fetch_logs();
             }
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('H') => {
@@ -612,74 +808,59 @@ impl App {
                     self.logs_state.select(None);
                     return;
                 }
+                self.save_current_index();
                 match self.active_tab {
                     Tab::Running => {
-                        self.running_index = self.selected_index;
-                        self.active_tab = Tab::Networks;
-                        self.selected_index = self.networks_index;
+                        self.active_tab = Tab::Pods;
                     }
                     Tab::Stopped => {
-                        self.stopped_index = self.selected_index;
                         self.active_tab = Tab::Running;
-                        self.selected_index = self.running_index;
                     }
                     Tab::Images => {
-                        self.images_index = self.selected_index;
                         self.active_tab = Tab::Stopped;
-                        self.selected_index = self.stopped_index;
                     }
                     Tab::Volumes => {
-                        self.volumes_index = self.selected_index;
                         self.active_tab = Tab::Images;
-                        self.selected_index = self.images_index;
                     }
                     Tab::Networks => {
-                        self.networks_index = self.selected_index;
                         self.active_tab = Tab::Volumes;
-                        self.selected_index = self.volumes_index;
+                    }
+                    Tab::Pods => {
+                        self.active_tab = Tab::Networks;
                     }
                 };
+                self.load_current_index();
                 self.trigger_fetch_logs();
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                let max = match self.active_tab {
-                    Tab::Running => self.running.len().saturating_sub(1),
-                    Tab::Stopped => self.stopped.len().saturating_sub(1),
-                    Tab::Images => self.images.len().saturating_sub(1),
-                    Tab::Volumes => self.volumes.len().saturating_sub(1),
-                    Tab::Networks => self.networks.len().saturating_sub(1),
-                };
+                let max = self.get_list_len_for_tab(&self.active_tab).saturating_sub(1);
                 if self.selected_index < max {
                     self.selected_index += 1;
                     self.trigger_fetch_logs();
                 } else if !self.logs_focused {
+                    self.save_current_index();
                     match self.active_tab {
                         Tab::Running => {
-                            self.running_index = self.selected_index;
                             self.active_tab = Tab::Stopped;
-                            self.selected_index = self.stopped_index;
                         }
                         Tab::Stopped => {
-                            self.stopped_index = self.selected_index;
                             self.active_tab = Tab::Images;
-                            self.selected_index = self.images_index;
                         }
                         Tab::Images => {
-                            self.images_index = self.selected_index;
                             self.active_tab = Tab::Volumes;
-                            self.selected_index = self.volumes_index;
                         }
                         Tab::Volumes => {
-                            self.volumes_index = self.selected_index;
                             self.active_tab = Tab::Networks;
-                            self.selected_index = self.networks_index;
                         }
                         Tab::Networks => {
-                            self.networks_index = self.selected_index;
+                            self.active_tab = Tab::Pods;
+                        }
+                        Tab::Pods => {
                             self.logs_focused = true;
                             return;
                         }
                     }
+                    self.load_current_index();
                     self.trigger_fetch_logs();
                 }
             }
@@ -688,37 +869,36 @@ impl App {
                     self.selected_index -= 1;
                     self.trigger_fetch_logs();
                 } else if !self.logs_focused {
+                    self.save_current_index();
                     match self.active_tab {
                         Tab::Running => {
-                            self.running_index = self.selected_index;
                             self.logs_focused = true;
                             return;
                         }
                         Tab::Stopped => {
-                            self.stopped_index = self.selected_index;
                             self.active_tab = Tab::Running;
-                            self.selected_index = self.running_index;
                         }
                         Tab::Images => {
-                            self.images_index = self.selected_index;
                             self.active_tab = Tab::Stopped;
-                            self.selected_index = self.stopped_index;
                         }
                         Tab::Volumes => {
-                            self.volumes_index = self.selected_index;
                             self.active_tab = Tab::Images;
-                            self.selected_index = self.images_index;
                         }
                         Tab::Networks => {
-                            self.networks_index = self.selected_index;
                             self.active_tab = Tab::Volumes;
-                            self.selected_index = self.volumes_index;
+                        }
+                        Tab::Pods => {
+                            self.active_tab = Tab::Networks;
                         }
                     }
+                    self.load_current_index();
                     self.trigger_fetch_logs();
                 }
             }
-            KeyCode::Char('r') => self.trigger_refresh_data(),
+            KeyCode::Char('r') => {
+                self.status_message = None;
+                self.trigger_refresh_data();
+            }
             KeyCode::Char('E') => {
                 self.engine_view.next();
                 self.selected_index = 0;
@@ -728,6 +908,7 @@ impl App {
                 match self.active_tab {
                     Tab::Running => self.handle_action("stop"),
                     Tab::Stopped => self.handle_action("start"),
+                    Tab::Pods => self.handle_action("stop"),
                     _ => {}
                 }
             }
@@ -739,6 +920,11 @@ impl App {
             KeyCode::Char('p') => {
                 if matches!(self.active_tab, Tab::Images) {
                     self.direct_pull_form = Some(DirectPullForm::default());
+                }
+            }
+            KeyCode::Char('P') => {
+                if matches!(self.active_tab, Tab::Pods) {
+                    self.create_pod_form = Some(CreatePodForm::default());
                 }
             }
             KeyCode::Char('c') => {
@@ -761,15 +947,14 @@ impl App {
                 }
             }
             KeyCode::Char('x') => {
-                if matches!(self.active_tab, Tab::Running) {
-                    if self.running.get(self.selected_index).is_some() {
+                if matches!(self.active_tab, Tab::Running)
+                    && self.running.get(self.selected_index).is_some() {
                         self.exec_form = Some(ExecForm {
                             command: String::new(),
                         });
                         self.logs_focused = false;
                         self.logs_state.select(None);
                     }
-                }
             }
             KeyCode::Char('S') | KeyCode::Char('u') => {
                 if matches!(self.active_tab, Tab::Stopped) {
@@ -779,18 +964,30 @@ impl App {
             KeyCode::Char('d') | KeyCode::Delete => self.handle_action("rm"),
             KeyCode::Enter => self.handle_primary_action(),
             KeyCode::Char('?') => self.show_help_tooltip = true,
+            KeyCode::Char('g') => self.trigger_inspect(),
             _ => {}
         }
     }
 
     fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
         use crossterm::event::{MouseButton, MouseEventKind};
-        if self.show_confirmation || self.create_container_form.is_some() {
+        if self.show_confirmation || self.create_container_form.is_some() || self.create_pod_form.is_some() {
             return;
         }
 
         match mouse.kind {
             MouseEventKind::ScrollDown => {
+                // Inspect popup captures scroll
+                if self.inspect_popup.is_some() {
+                    let total_lines = self.inspect_popup.as_ref()
+                        .map(|s| s.lines().count() as u16)
+                        .unwrap_or(0);
+                    let max_scroll = total_lines.saturating_sub(1);
+                    if self.inspect_scroll < max_scroll {
+                        self.inspect_scroll += 1;
+                    }
+                    return;
+                }
                 if self.logs_focused {
                     if let Some(selected) = self.logs_state.selected() {
                         if selected < self.container_logs.len().saturating_sub(1) {
@@ -799,19 +996,18 @@ impl App {
                     }
                     return;
                 }
-                let max = match self.active_tab {
-                    Tab::Running => self.running.len().saturating_sub(1),
-                    Tab::Stopped => self.stopped.len().saturating_sub(1),
-                    Tab::Images => self.images.len().saturating_sub(1),
-                    Tab::Volumes => self.volumes.len().saturating_sub(1),
-                    Tab::Networks => self.networks.len().saturating_sub(1),
-                };
+                let max = self.get_list_len_for_tab(&self.active_tab).saturating_sub(1);
                 if self.selected_index < max {
                     self.selected_index += 1;
                     self.trigger_fetch_logs();
                 }
             }
             MouseEventKind::ScrollUp => {
+                // Inspect popup captures scroll
+                if self.inspect_popup.is_some() {
+                    self.inspect_scroll = self.inspect_scroll.saturating_sub(1);
+                    return;
+                }
                 if self.logs_focused {
                     if let Some(selected) = self.logs_state.selected() {
                         if selected > 0 {
@@ -826,6 +1022,10 @@ impl App {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                // Block clicks when inspect popup is open
+                if self.inspect_popup.is_some() {
+                    return;
+                }
                 if let Ok((cols, rows)) = crossterm::terminal::size() {
                     use ratatui::layout::{Constraint, Direction, Layout, Rect};
                     let chunks = Layout::default()
@@ -845,11 +1045,12 @@ impl App {
                     let panel_chunks = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([
-                            Constraint::Percentage(20),
-                            Constraint::Percentage(20),
-                            Constraint::Percentage(20),
-                            Constraint::Percentage(20),
-                            Constraint::Percentage(20),
+                            Constraint::Percentage(17),
+                            Constraint::Percentage(17),
+                            Constraint::Percentage(17),
+                            Constraint::Percentage(17),
+                            Constraint::Percentage(16),
+                            Constraint::Percentage(16),
                         ])
                         .split(main_chunks[0]);
 
@@ -873,32 +1074,26 @@ impl App {
                         self.logs_focused = false;
                         self.logs_state.select(None);
 
-                        if click_y >= panel_chunks[0].y && click_y < panel_chunks[0].y + panel_chunks[0].height {
-                            self.active_tab = Tab::Running;
-                            let idx = click_y.saturating_sub(panel_chunks[0].y).saturating_sub(1);
-                            let max = self.running.len().saturating_sub(1);
-                            self.selected_index = std::cmp::min(idx as usize, max);
-                            self.logs_focused = true;
-                        } else if click_y >= panel_chunks[1].y && click_y < panel_chunks[1].y + panel_chunks[1].height {
-                            self.active_tab = Tab::Stopped;
-                            let idx = click_y.saturating_sub(panel_chunks[1].y).saturating_sub(1);
-                            let max = self.stopped.len().saturating_sub(1);
-                            self.selected_index = std::cmp::min(idx as usize, max);
-                        } else if click_y >= panel_chunks[2].y && click_y < panel_chunks[2].y + panel_chunks[2].height {
-                            self.active_tab = Tab::Images;
-                            let idx = click_y.saturating_sub(panel_chunks[2].y).saturating_sub(1);
-                            let max = self.images.len().saturating_sub(1);
-                            self.selected_index = std::cmp::min(idx as usize, max);
-                        } else if click_y >= panel_chunks[3].y && click_y < panel_chunks[3].y + panel_chunks[3].height {
-                            self.active_tab = Tab::Volumes;
-                            let idx = click_y.saturating_sub(panel_chunks[3].y).saturating_sub(1);
-                            let max = self.volumes.len().saturating_sub(1);
-                            self.selected_index = std::cmp::min(idx as usize, max);
-                        } else if click_y >= panel_chunks[4].y && click_y < panel_chunks[4].y + panel_chunks[4].height {
-                            self.active_tab = Tab::Networks;
-                            let idx = click_y.saturating_sub(panel_chunks[4].y).saturating_sub(1);
-                            let max = self.networks.len().saturating_sub(1);
-                            self.selected_index = std::cmp::min(idx as usize, max);
+                        let panel_tab_map = [
+                            (0usize, Tab::Running),
+                            (1, Tab::Stopped),
+                            (2, Tab::Images),
+                            (3, Tab::Volumes),
+                            (4, Tab::Networks),
+                            (5, Tab::Pods),
+                        ];
+
+                        for (idx, tab) in &panel_tab_map {
+                            if click_y >= panel_chunks[*idx].y && click_y < panel_chunks[*idx].y + panel_chunks[*idx].height {
+                                self.save_current_index();
+                                self.active_tab = tab.clone();
+                                let list_offset = panel_chunks[*idx].y + 1; // account for border
+                                let raw_idx = click_y.saturating_sub(list_offset) as usize;
+                                let max = self.get_list_len_for_tab(&self.active_tab).saturating_sub(1);
+                                self.selected_index = std::cmp::min(raw_idx, max);
+                                self.load_current_index();
+                                break;
+                            }
                         }
                         self.trigger_fetch_logs();
                     }
@@ -916,51 +1111,98 @@ impl App {
         tokio::spawn(async move {
             let mut running = Vec::new();
             let mut stopped = Vec::new();
-            if let Ok(c) = client.get_containers(&engines).await {
-                running = c.iter().filter(|x| x.is_running()).cloned().collect();
-                stopped = c.iter().filter(|x| !x.is_running()).cloned().collect();
+            let containers_result = client.get_containers(&engines).await;
+            match containers_result {
+                Ok(c) => {
+                    running = c.iter().filter(|x| x.is_running()).cloned().collect();
+                    stopped = c.iter().filter(|x| !x.is_running()).cloned().collect();
+                }
+                Err(e) => {
+                    if let Some(tx) = &tx {
+                        let _ = tx.send(Action::Error { message: format!("Containers: {}", e) });
+                    }
+                }
             }
-            let images = client.get_images(&engines).await.unwrap_or_default();
-            let volumes = client.get_volumes(&engines).await.unwrap_or_default();
-            let networks = client.get_networks(&engines).await.unwrap_or_default();
+            let images = match client.get_images(&engines).await {
+                Ok(v) => v,
+                Err(e) => {
+                    if let Some(tx) = &tx {
+                        let _ = tx.send(Action::Error { message: format!("Images: {}", e) });
+                    }
+                    Vec::new()
+                }
+            };
+            let volumes = match client.get_volumes(&engines).await {
+                Ok(v) => v,
+                Err(e) => {
+                    if let Some(tx) = &tx {
+                        let _ = tx.send(Action::Error { message: format!("Volumes: {}", e) });
+                    }
+                    Vec::new()
+                }
+            };
+            let networks = match client.get_networks(&engines).await {
+                Ok(v) => v,
+                Err(e) => {
+                    if let Some(tx) = &tx {
+                        let _ = tx.send(Action::Error { message: format!("Networks: {}", e) });
+                    }
+                    Vec::new()
+                }
+            };
+            let pods = match client.get_pods(&engines).await {
+                Ok(v) => v,
+                Err(e) => {
+                    if let Some(tx) = &tx {
+                        let _ = tx.send(Action::Error { message: format!("Pods: {}", e) });
+                    }
+                    Vec::new()
+                }
+            };
 
             if let Some(tx) = tx {
-                let _ = tx.send(Action::DataRefreshed { running, stopped, images, volumes, networks });
+                let _ = tx.send(Action::DataRefreshed { running, stopped, images, volumes, networks, pods });
             }
         });
     }
 
     fn trigger_fetch_logs(&mut self) {
-        let (engine, id) = match self.active_tab {
+        let (engine, id, is_pod) = match self.active_tab {
             Tab::Running => {
                 if let Some(c) = self.running.get(self.selected_index) {
-                    (Some(c.engine.clone()), Some(c.id.clone()))
+                    (Some(c.engine.clone()), Some(c.id.clone()), false)
                 } else {
-                    (None, None)
+                    (None, None, false)
                 }
             }
             Tab::Stopped => {
                 if let Some(c) = self.stopped.get(self.selected_index) {
-                    (Some(c.engine.clone()), Some(c.id.clone()))
+                    (Some(c.engine.clone()), Some(c.id.clone()), false)
                 } else {
-                    (None, None)
+                    (None, None, false)
                 }
             }
-            _ => (None, None),
+            Tab::Pods => {
+                if let Some(p) = self.pods.get(self.selected_index) {
+                    (Some(p.engine.clone()), Some(p.id.clone()), true)
+                } else {
+                    (None, None, false)
+                }
+            }
+            _ => (None, None, false),
         };
 
         if let (Some(engine), Some(id)) = (engine, id) {
             let client = self.engine_client.clone();
             let tx = self.action_tx.clone();
             tokio::spawn(async move {
-                if let Ok(logs) = client.get_container_logs(&engine, &id).await {
-                    if let Some(tx) = tx {
-                        let _ = tx.send(Action::LogsRefreshed { logs });
-                    }
+                let logs = if is_pod {
+                    client.get_pod_logs(&engine, &id).await.unwrap_or_default()
                 } else {
-                    if let Some(tx) = tx {
-                        let _ = tx.send(Action::LogsRefreshed { logs: vec![] });
-                    }
+                    client.get_container_logs(&engine, &id).await.unwrap_or_default()
+                };
+                if let Some(tx) = tx {
+                    let _ = tx.send(Action::LogsRefreshed { logs });
                 }
             });
         } else {
@@ -969,168 +1211,78 @@ impl App {
         }
     }
 
+    fn trigger_inspect(&mut self) {
+        let resource = self.get_selected_resource();
+        if let Some((tab, engine, id)) = resource {
+            let client = self.engine_client.clone();
+            let tx = self.action_tx.clone();
+            tokio::spawn(async move {
+                let result = match tab {
+                    Tab::Pods => client.get_container_inspect(&engine, &id).await,
+                    _ => client.get_container_inspect(&engine, &id).await,
+                };
+                if let Some(tx) = tx {
+                    match result {
+                        Ok(output) => { let _ = tx.send(Action::InspectResult { output }); }
+                        Err(e) => { let _ = tx.send(Action::Error { message: e.to_string() }); }
+                    }
+                }
+            });
+        }
+    }
+
     fn handle_action(&mut self, action: &str) {
         if action == "stop" || action == "rm" {
-            let res = match self.active_tab {
-                Tab::Running => self
-                    .running
-                    .get(self.selected_index)
-                    .map(|c| (c.engine.clone(), c.id.clone())),
-                Tab::Stopped => self
-                    .stopped
-                    .get(self.selected_index)
-                    .map(|c| (c.engine.clone(), c.id.clone())),
-                Tab::Images => self
-                    .images
-                    .get(self.selected_index)
-                    .map(|i| (i.engine.clone(), i.id.clone())),
-                Tab::Volumes => self
-                    .volumes
-                    .get(self.selected_index)
-                    .map(|v| (v.engine.clone(), v.name.clone())),
-                Tab::Networks => self
-                    .networks
-                    .get(self.selected_index)
-                    .map(|n| (n.engine.clone(), n.id.clone())),
-            };
-
-            if let Some((engine, id)) = res {
-                self.pending_action = Some((self.active_tab.clone(), engine, id, action.to_string()));
+            if let Some((tab, engine, id)) = self.get_selected_resource() {
+                self.pending_action = Some((tab, engine, id, action.to_string()));
                 self.show_confirmation = true;
             }
             return;
         }
         
-        let client = self.engine_client.clone();
-        let tx = self.action_tx.clone();
-        let action = action.to_string();
-
-        match self.active_tab {
-            Tab::Running => {
-                if let Some(c) = self.running.get(self.selected_index) {
-                    let engine = c.engine.clone();
-                    let id = c.id.clone();
-                    tokio::spawn(async move {
-                        let _ = client.action_container(&engine, &id, &action).await;
-                        if let Some(tx) = tx {
-                            let _ = tx.send(Action::ActionComplete);
-                        }
-                    });
-                }
-            }
-            Tab::Stopped => {
-                if let Some(c) = self.stopped.get(self.selected_index) {
-                    let engine = c.engine.clone();
-                    let id = c.id.clone();
-                    tokio::spawn(async move {
-                        let _ = client.action_container(&engine, &id, &action).await;
-                        if let Some(tx) = tx {
-                            let _ = tx.send(Action::ActionComplete);
-                        }
-                    });
-                }
-            }
-            Tab::Images => {
-                if let Some(i) = self.images.get(self.selected_index) {
-                    let engine = i.engine.clone();
-                    let id = i.id.clone();
-                    tokio::spawn(async move {
-                        let _ = client.action_image(&engine, &id, &action).await;
-                        if let Some(tx) = tx {
-                            let _ = tx.send(Action::ActionComplete);
-                        }
-                    });
-                }
-            }
-            Tab::Volumes => {
-                if let Some(v) = self.volumes.get(self.selected_index) {
-                    let engine = v.engine.clone();
-                    let name = v.name.clone();
-                    tokio::spawn(async move {
-                        let _ = client.action_volume(&engine, &name, &action).await;
-                        if let Some(tx) = tx {
-                            let _ = tx.send(Action::ActionComplete);
-                        }
-                    });
-                }
-            }
-            Tab::Networks => {
-                if let Some(n) = self.networks.get(self.selected_index) {
-                    let engine = n.engine.clone();
-                    let id = n.id.clone();
-                    tokio::spawn(async move {
-                        let _ = client.action_network(&engine, &id, &action).await;
-                        if let Some(tx) = tx {
-                            let _ = tx.send(Action::ActionComplete);
-                        }
-                    });
-                }
-            }
+        if let Some((tab, engine, id)) = self.get_selected_resource() {
+            self.spawn_resource_action(tab, engine, id, action.to_string());
         }
     }
 
     fn execute_resource_action(&self, resource_type: Tab, engine: String, id: String, action: String) {
-        let client = self.engine_client.clone();
-        let tx = self.action_tx.clone();
-        tokio::spawn(async move {
-            match resource_type {
-                Tab::Running | Tab::Stopped => {
-                    let _ = client.action_container(&engine, &id, &action).await;
-                }
-                Tab::Images => {
-                    let _ = client.action_image(&engine, &id, &action).await;
-                }
-                Tab::Volumes => {
-                    let _ = client.action_volume(&engine, &id, &action).await;
-                }
-                Tab::Networks => {
-                    let _ = client.action_network(&engine, &id, &action).await;
-                }
-            }
-            if let Some(tx) = tx {
-                let _ = tx.send(Action::ActionComplete);
-            }
-        });
+        self.spawn_resource_action(resource_type, engine, id, action);
     }
 
     pub fn get_related_resources(&self, resource_type: &Tab, id: &str) -> Vec<(Tab, String, String)> {
         let mut related = Vec::new();
-        match resource_type {
-            Tab::Images => {
-                let image_names = self.images.iter()
-                    .find(|i| i.id == id)
-                    .map(|i| i.get_names())
-                    .unwrap_or_default();
+        if resource_type == &Tab::Images {
+            let image_names = self.images.iter()
+                .find(|i| i.id == id)
+                .map(|i| i.get_names())
+                .unwrap_or_default();
 
-                for c in &self.running {
-                    if c.image == id || c.id == id || image_names.contains(&c.image) {
-                         related.push((Tab::Running, c.engine.clone(), c.id.clone()));
-                    }
-                }
-                for c in &self.stopped {
-                    if c.image == id || c.id == id || image_names.contains(&c.image) {
-                         related.push((Tab::Stopped, c.engine.clone(), c.id.clone()));
-                    }
+            for c in &self.running {
+                if c.image == id || c.id == id || image_names.contains(&c.image) {
+                     related.push((Tab::Running, c.engine.clone(), c.id.clone()));
                 }
             }
-            _ => {} 
+            for c in &self.stopped {
+                if c.image == id || c.id == id || image_names.contains(&c.image) {
+                     related.push((Tab::Stopped, c.engine.clone(), c.id.clone()));
+                }
+            }
         }
         related
     }
 
     fn handle_primary_action(&mut self) {
         match self.active_tab {
-            Tab::Running | Tab::Stopped => {
+            Tab::Running | Tab::Stopped | Tab::Pods => {
                 self.logs_focused = true;
                 if !self.container_logs.is_empty() && self.logs_state.selected().is_none() {
                     self.logs_state.select(Some(self.container_logs.len().saturating_sub(1)));
                 }
             }
-            Tab::Images => {
-                if self.images.get(self.selected_index).is_some() {
+            Tab::Images
+                if self.images.get(self.selected_index).is_some() => {
                     self.create_container_form = Some(CreateContainerForm::default());
                 }
-            }
             _ => {}
         }
     }
@@ -1143,7 +1295,7 @@ impl App {
             let tx = self.action_tx.clone();
             let img_id = img.id.clone();
             tokio::spawn(async move {
-                let _ = client.run_container(
+                let result = client.run_container(
                     &target_engine,
                     &img_id,
                     &form.name,
@@ -1152,10 +1304,40 @@ impl App {
                     &form.command,
                 ).await;
                 if let Some(tx) = tx {
-                    let _ = tx.send(Action::ActionComplete);
+                    match result {
+                        Ok(()) => { let _ = tx.send(Action::ActionComplete); }
+                        Err(e) => { let _ = tx.send(Action::Error { message: e.to_string() }); }
+                    }
                 }
             });
         }
+    }
+
+    fn submit_create_pod(&mut self) {
+        let form = self.create_pod_form.clone().unwrap();
+        let engine = self.get_default_target_engine();
+        let client = self.engine_client.clone();
+        let tx = self.action_tx.clone();
+
+        // Build share namespace string
+        let mut shares = Vec::new();
+        if form.share_pid {
+            shares.push("pid");
+        }
+        if form.share_net {
+            shares.push("net");
+        }
+        let share_str = shares.join(",");
+
+        tokio::spawn(async move {
+            let result = client.create_pod(&engine, &form.name, &form.network, &share_str).await;
+            if let Some(tx) = tx {
+                match result {
+                    Ok(()) => { let _ = tx.send(Action::ActionComplete); }
+                    Err(e) => { let _ = tx.send(Action::Error { message: e.to_string() }); }
+                }
+            }
+        });
     }
 }
 
@@ -1180,6 +1362,8 @@ mod tests {
                 status: Some(serde_json::Value::String("Up".into())),
                 names: Some(serde_json::Value::Array(vec!["test".into()])),
                 name: None,
+                ports: None,
+                pod_id: None,
                 engine: engines.get(0).cloned().unwrap_or_else(|| "mock".into()),
             }])
         }
@@ -1212,8 +1396,14 @@ mod tests {
                 engine: "mock".into(),
             }])
         }
+        async fn get_pods(&self, _engines: &[String]) -> Result<Vec<Pod>> {
+            Ok(vec![])
+        }
         async fn get_container_logs(&self, _engine: &str, _id: &str) -> Result<Vec<String>> {
             Ok(vec!["mock logs".into()])
+        }
+        async fn get_pod_logs(&self, _engine: &str, _pod_id: &str) -> Result<Vec<String>> {
+            Ok(vec!["mock pod logs".into()])
         }
         async fn action_container(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
             Ok(())
@@ -1226,6 +1416,15 @@ mod tests {
             _ports: &str,
             _env: &str,
             _command: &str,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn create_pod(
+            &self,
+            _engine: &str,
+            _name: &str,
+            _network: &str,
+            _share: &str,
         ) -> Result<()> {
             Ok(())
         }
@@ -1249,6 +1448,12 @@ mod tests {
         }
         async fn action_network(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
             Ok(())
+        }
+        async fn action_pod(&self, _engine: &str, _id: &str, _action: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn get_container_inspect(&self, _engine: &str, _id: &str) -> Result<String> {
+            Ok("{}".into())
         }
         async fn configure_registries(&self, _registries_csv: &str) -> Result<()> {
             Ok(())
@@ -1276,6 +1481,7 @@ mod tests {
             images: vec![],
             volumes: vec![],
             networks: vec![],
+            pods: vec![],
         });
 
         assert_eq!(app.selected_index, 0);
@@ -1289,6 +1495,8 @@ mod tests {
         assert_eq!(app.active_tab, Tab::Volumes);
         app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
         assert_eq!(app.active_tab, Tab::Networks);
+        app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
+        assert_eq!(app.active_tab, Tab::Pods);
         app.update(Action::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty())));
         assert!(app.logs_focused);
 
@@ -1312,5 +1520,19 @@ mod tests {
 
         app.engine_view = EngineView::Podman;
         assert_eq!(app.get_active_engines(), vec!["podman".to_string()]);
+    }
+
+    #[test]
+    fn test_error_handling() {
+        let mut app = App::with_client(Box::new(MockEngine));
+        app.update(Action::Error { message: "Test error".to_string() });
+        assert_eq!(app.status_message, Some("Test error".to_string()));
+    }
+
+    #[test]
+    fn test_inspect_popup() {
+        let mut app = App::with_client(Box::new(MockEngine));
+        app.update(Action::InspectResult { output: "test output".to_string() });
+        assert_eq!(app.inspect_popup, Some("test output".to_string()));
     }
 }

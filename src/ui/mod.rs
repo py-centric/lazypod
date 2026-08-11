@@ -70,18 +70,24 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     popups::draw_popups(f, app, f.size());
 
-    let mut status = "Status: OK".to_string();
-    if app.is_pulling {
-        status = "Status: Pulling...".to_string();
+    // Status bar
+    let (status, color) = if let Some(msg) = &app.status_message {
+        (format!("Error: {}", msg), Color::Red)
+    } else if app.is_pulling {
+        ("Status: Pulling...".to_string(), Color::DarkGray)
     } else if let Some(form) = &app.search_image_form {
         if form.is_searching {
-            status = "Status: Searching...".to_string();
+            ("Status: Searching...".to_string(), Color::DarkGray)
+        } else {
+            ("Status: OK".to_string(), Color::DarkGray)
         }
-    }
+    } else {
+        ("Status: OK".to_string(), Color::DarkGray)
+    };
 
     let status_line = Paragraph::new(Line::from(vec![Span::styled(
         status,
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(color),
     )]));
     f.render_widget(status_line, chunks[2]);
 }

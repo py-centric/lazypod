@@ -1,7 +1,8 @@
 use crossterm::event::{KeyEvent, MouseEvent};
-use crate::podman::{Container, Image, Network, SearchResult, Volume};
+use crate::podman::{Container, Image, Network, Pod, SearchResult, Volume};
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::enum_variant_names)]
 pub enum Action {
     Tick,
     Quit,
@@ -13,6 +14,7 @@ pub enum Action {
         images: Vec<Image>,
         volumes: Vec<Volume>,
         networks: Vec<Network>,
+        pods: Vec<Pod>,
     },
     LogsRefreshed {
         logs: Vec<String>,
@@ -20,6 +22,12 @@ pub enum Action {
     SearchResults {
         results: Vec<SearchResult>,
     },
+    InspectResult {
+        output: String,
+    },
     PullComplete,
     ActionComplete,
+    Error {
+        message: String,
+    },
 }

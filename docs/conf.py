@@ -2,14 +2,15 @@ import os
 import sys
 
 project = 'Lazypod'
-copyright = '2026, Lazypod Contributors'
-author = 'Lazypod Contributors'
+copyright = '2026, PyCentric and Lazypod Contributors'
+author = 'PyCentric & Lazypod Contributors'
 release = '0.1.0'
 
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.viewcode',
     'sphinx.ext.githubpages',
+    'sphinxcontrib.mermaid',
 ]
 
 templates_path = ['_templates']

@@ -1,9 +1,9 @@
 Welcome to Lazypod's documentation!
 ===================================
 
-Lazypod is a modern, responsive Terminal User Interface (TUI) for container management, supporting both **Docker** and **Podman**. It is inspired by the interface of `lazydocker <https://github.com/jesseduffield/lazydocker>`_.
+Lazypod is a modern, responsive Terminal User Interface (TUI) for container management, supporting both **Docker** and **Podman**, built by **PyCentric**. It is inspired by the interface of `lazydocker <https://github.com/jesseduffield/lazydocker>`_.
 
-This documentation provides an in-depth look at Lazypod's features, how to install and use it, its architecture, and detailed keybindings.
+This documentation provides an in-depth look at Lazypod's features, how to install and use it, its architecture, detailed keybindings, and full dependency licensing.
 
 .. toctree::
    :maxdepth: 2
@@ -13,6 +13,7 @@ This documentation provides an in-depth look at Lazypod's features, how to insta
    installation
    keybindings
    architecture
+   dependencies
 
 Contributing
 ------------
@@ -25,7 +26,7 @@ License
 Lazypod is dual-licensed:
 
 - **Open Source**: `GNU Affero General Public License v3.0 <https://www.gnu.org/licenses/agpl-3.0.html>`_ (AGPL-3.0). See the ``LICENSE`` file for details.
-- **Commercial**: A commercial license is available for organizations that cannot comply with the AGPL-3.0 terms. Contact the maintainers for details.
+- **Commercial**: A commercial license is available for organizations that cannot comply with the AGPL-3.0 terms. Contact the PyCentric maintainers for details.
 
 Indices and tables
 ==================

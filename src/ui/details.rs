@@ -49,13 +49,14 @@ pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
             let image = &c.image;
             format!("ID: {id}\nImage: {image}\nCommand: {cmd}\nStatus: {status}\nEngine: {engine}{ports_str}")
         }),
-        Tab::Images => app.images.get(app.selected_index).map(|i| {
+        Tab::Images => app.get_filtered_images().get(app.selected_index).map(|i| {
             let tags = i.get_names().join(", ");
             let size = i.get_size_str();
             let created = i.get_created_str();
             let engine = &i.engine;
             let id = &i.id;
-            format!("ID: {id}\nTags: {tags}\nSize: {size}\nCreated: {created}\nEngine: {engine}")
+            let dangling_str = if i.is_dangling() { "\nDangling: Yes" } else { "" };
+            format!("ID: {id}\nTags: {tags}\nSize: {size}\nCreated: {created}\nEngine: {engine}{dangling_str}")
         }),
         Tab::Volumes => app.volumes.get(app.selected_index).map(|v| {
             let name = &v.name;
@@ -131,6 +132,8 @@ pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
         " Logs (Press 'y' to copy line, 'Esc' to exit) "
     } else if matches!(app.active_tab, Tab::Pods) {
         " Pod Logs "
+    } else if matches!(app.active_tab, Tab::Images) {
+        " Image History / Layers "
     } else {
         " Logs "
     };
@@ -154,12 +157,23 @@ pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
         );
 
         f.render_stateful_widget(list, chunks[1], &mut app.logs_state);
+    } else if matches!(app.active_tab, Tab::Images) {
+        if app.image_history.is_empty() {
+            let p = Paragraph::new("No image history available. Select an image.")
+                .block(logs_block)
+                .wrap(Wrap { trim: true });
+            f.render_widget(p, chunks[1]);
+        } else {
+            let items: Vec<ListItem> = app
+                .image_history
+                .iter()
+                .map(|l| ListItem::new(Line::from(l.clone())))
+                .collect();
+            let list = List::new(items).block(logs_block);
+            f.render_widget(list, chunks[1]);
+        }
     } else {
-        let hint = match app.active_tab {
-            Tab::Pods => "Logs not available for pods. Select a container.",
-            _ => "Logs only available for containers.",
-        };
-        let p = Paragraph::new(hint)
+        let p = Paragraph::new("Logs only available for containers.")
             .block(logs_block)
             .wrap(Wrap { trim: true });
         f.render_widget(p, chunks[1]);

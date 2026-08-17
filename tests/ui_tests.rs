@@ -68,6 +68,7 @@ fn test_ui_draw_with_data() {
         names: None,
         size: Some(serde_json::json!(35_000_000)),
         created: Some(serde_json::Value::Number(1_700_000_000.into())),
+        dangling: None,
         engine: "docker".to_string(),
     });
 
@@ -244,4 +245,125 @@ fn test_ui_draw_confirmation_popup() {
 
     assert!(content.contains("Confirmation"));
     assert!(content.contains("Are you sure you want to perform this action?"));
+}
+
+#[test]
+fn test_ui_draw_images_tab_with_dangling_filter_and_history() {
+    let mut terminal = setup_test_terminal(140, 40);
+    let mut app = App::new();
+    app.active_tab = Tab::Images;
+    app.images = vec![
+        Image {
+            id: "sha256:111111".to_string(),
+            parent_id: None,
+            repo_tags: Some(serde_json::Value::Array(vec!["my-app:v1".into()])),
+            repository: Some("my-app".into()),
+            tag: Some("v1".into()),
+            names: None,
+            size: Some(serde_json::json!(50_000_000)),
+            created: Some(serde_json::Value::Number(1_700_000_000.into())),
+            dangling: None,
+            engine: "podman".to_string(),
+        },
+        Image {
+            id: "sha256:222222".to_string(),
+            parent_id: None,
+            repo_tags: None,
+            repository: None,
+            tag: None,
+            names: Some(serde_json::Value::Array(vec!["<none>:<none>".into()])),
+            size: Some(serde_json::json!(10_000_000)),
+            created: Some(serde_json::Value::Number(1_700_000_000.into())),
+            dangling: Some(true),
+            engine: "podman".to_string(),
+        },
+    ];
+    app.image_history = vec!["CMD [\"sh\"]".to_string(), "COPY . /app".to_string()];
+
+    terminal
+        .draw(|f| ui::draw(f, &mut app))
+        .expect("Failed to draw images tab");
+
+    let content = format!("{:?}", terminal.backend().buffer());
+    assert!(content.contains("Images (2)"));
+    assert!(content.contains("my-app:v1"));
+    assert!(content.contains("[dangling]"));
+    assert!(content.contains("Image History / Layers"));
+    assert!(content.contains("COPY . /app"));
+
+    // Now test with dangling filter enabled
+    app.filter_dangling_images = true;
+    terminal
+        .draw(|f| ui::draw(f, &mut app))
+        .expect("Failed to draw images tab with dangling filter");
+
+    let content_filtered = format!("{:?}", terminal.backend().buffer());
+    assert!(content_filtered.contains("Images [Dangling] (1/2)"));
+}
+
+#[test]
+fn test_ui_draw_tag_image_popup() {
+    use lazypod::app::TagImageForm;
+
+    let mut terminal = setup_test_terminal(120, 40);
+    let mut app = App::new();
+    app.active_tab = Tab::Images;
+    app.images = vec![Image {
+        id: "sha256:111111".to_string(),
+        parent_id: None,
+        repo_tags: Some(serde_json::Value::Array(vec!["alpine:3.18".into()])),
+        repository: None,
+        tag: None,
+        names: None,
+        size: Some(serde_json::json!(5_000_000)),
+        created: None,
+        dangling: None,
+        engine: "podman".to_string(),
+    }];
+    app.tag_image_form = Some(TagImageForm {
+        target_tag: "my-registry.local/alpine:custom".to_string(),
+    });
+
+    terminal
+        .draw(|f| ui::draw(f, &mut app))
+        .expect("Failed to draw tag image popup");
+
+    let content = format!("{:?}", terminal.backend().buffer());
+    assert!(content.contains("Tag Image"));
+    assert!(content.contains("alpine:3.18"));
+    assert!(content.contains("my-registry.local/alpine:custom"));
+}
+
+#[test]
+fn test_ui_draw_prune_confirmation_popups() {
+    let mut terminal = setup_test_terminal(120, 40);
+    let mut app = App::new();
+    app.show_confirmation = true;
+    app.pending_action = Some((
+        Tab::Images,
+        "all".to_string(),
+        "dangling".to_string(),
+        "prune_dangling".to_string(),
+    ));
+
+    terminal
+        .draw(|f| ui::draw(f, &mut app))
+        .expect("Failed to draw prune dangling confirmation");
+
+    let content = format!("{:?}", terminal.backend().buffer());
+    assert!(content.contains("prune dangling images"));
+
+    app.pending_action = Some((
+        Tab::Images,
+        "all".to_string(),
+        "all_unused".to_string(),
+        "prune_all".to_string(),
+    ));
+
+    terminal
+        .draw(|f| ui::draw(f, &mut app))
+        .expect("Failed to draw prune all confirmation");
+
+    let content_all = format!("{:?}", terminal.backend().buffer());
+    assert!(content_all.contains("prune ALL unused images"));
 }

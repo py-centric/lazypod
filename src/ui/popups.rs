@@ -63,6 +63,10 @@ pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
             Line::from("Images Tab:"),
             Line::from("  /          Search registry for images"),
             Line::from("  p          Pull an image directly"),
+            Line::from("  t          Tag selected image"),
+            Line::from("  f          Toggle dangling images filter"),
+            Line::from("  P          Prune dangling images"),
+            Line::from("  X          Prune all unused images"),
             Line::from("  c          Configure unqualified registries"),
             Line::from(""),
             Line::from("Pods Tab:"),
@@ -294,30 +298,70 @@ pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
+    if let Some(form) = &app.tag_image_form {
+        let block = Block::default()
+            .title(" Tag Image ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let selected_img = app
+            .get_filtered_images()
+            .get(app.selected_index)
+            .map_or_else(
+                || "Unknown".to_string(),
+                |i| {
+                    i.get_names()
+                        .first()
+                        .map_or_else(|| i.id.clone(), Clone::clone)
+                },
+            );
+        let text = vec![
+            Line::from(format!("Image: {selected_img}")),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("Target Tag: "),
+                Span::styled(&form.target_tag, Style::default().fg(Color::Yellow)),
+            ]),
+            Line::from(""),
+            Line::from("(Enter to tag, Esc to cancel)"),
+        ];
+        let p = Paragraph::new(text).block(block);
+        let popup_area = centered_rect(55, 25, area);
+        f.render_widget(Clear, popup_area);
+        f.render_widget(p, popup_area);
+        return;
+    }
+
     if app.show_confirmation {
         let block = Block::default()
             .title(" Confirmation ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Red));
         let mut msg = "Are you sure you want to perform this action?".to_string();
-        if let Some((tab, _engine, id, _action)) = &app.pending_action {
-            let related = app.get_related_resources(tab, id);
-            if related.is_empty() {
-                msg.push_str("\n\nPress 'y' to continue, 'n' to cancel.");
+        if let Some((tab, _engine, id, action)) = &app.pending_action {
+            if action == "prune_dangling" {
+                msg = "Are you sure you want to prune dangling images from all active engines?\n\nPress 'y' to continue, 'n' to cancel.".to_string();
+            } else if action == "prune_all" {
+                msg = "Are you sure you want to prune ALL unused images from all active engines?\n\nPress 'y' to continue, 'n' to cancel.".to_string();
             } else {
-                msg.push_str("\n\nThis will also affect:");
-                for (rt, _, rid) in related {
-                    let _ = write!(msg, "\n - {rt:?} {rid}");
+                let related = app.get_related_resources(tab, id);
+                if related.is_empty() {
+                    msg.push_str("\n\nPress 'y' to continue, 'n' to cancel.");
+                } else {
+                    msg.push_str("\n\nThis will also affect:");
+                    for (rt, _, rid) in related {
+                        let _ = write!(msg, "\n - {rt:?} {rid}");
+                    }
+                    msg.push_str(
+                        "\n\nPress 'y' to continue, 'a' to apply to all related, 'n' to cancel.",
+                    );
                 }
-                msg.push_str(
-                    "\n\nPress 'y' to continue, 'a' to apply to all related, 'n' to cancel.",
-                );
             }
         }
         let p = Paragraph::new(msg)
             .block(block)
+            .wrap(Wrap { trim: true })
             .alignment(Alignment::Center);
-        let popup_area = centered_rect(50, 30, area);
+        let popup_area = centered_rect(60, 30, area);
         f.render_widget(Clear, popup_area);
         f.render_widget(p, popup_area);
     }

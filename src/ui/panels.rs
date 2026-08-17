@@ -132,23 +132,34 @@ pub fn prepare_stopped_list(app: &App) -> (List<'static>, ListState) {
 
 #[must_use]
 pub fn prepare_image_list(app: &App) -> (List<'static>, ListState) {
-    let items: Vec<ListItem> = app
-        .images
+    let filtered_images = app.get_filtered_images();
+    let items: Vec<ListItem> = filtered_images
         .iter()
         .map(|i| {
             let names = i.get_names();
             let name = names.first().map_or("<none>", |s| s.as_str());
             let prefix = if i.engine == "docker" { "[D] " } else { "[P] " };
             let size = i.get_size_str();
+            let dangling_badge = if i.is_dangling() {
+                Span::styled(" [dangling]", Style::default().fg(Color::DarkGray))
+            } else {
+                Span::raw("")
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(prefix, Style::default().fg(Color::Blue)),
                 Span::raw(format!("{name} ({size})")),
+                dangling_badge,
             ]))
         })
         .collect();
 
-    let count = app.images.len();
-    let title = format!(" Images ({count}) ");
+    let count = filtered_images.len();
+    let total = app.images.len();
+    let title = if app.filter_dangling_images {
+        format!(" Images [Dangling] ({count}/{total}) ")
+    } else {
+        format!(" Images ({count}) ")
+    };
     let border_style = if matches!(app.active_tab, Tab::Images) && !app.logs_focused {
         Style::default().fg(Color::Yellow)
     } else {
@@ -169,7 +180,7 @@ pub fn prepare_image_list(app: &App) -> (List<'static>, ListState) {
         );
 
     let mut state = ListState::default();
-    if matches!(app.active_tab, Tab::Images) && !app.images.is_empty() {
+    if matches!(app.active_tab, Tab::Images) && !filtered_images.is_empty() {
         state.select(Some(app.selected_index));
     }
     (list, state)

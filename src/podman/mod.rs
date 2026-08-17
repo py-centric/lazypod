@@ -33,6 +33,9 @@ pub trait EngineClient: Send + Sync {
     async fn get_pod_logs(&self, engine: &str, pod_id: &str) -> Result<Vec<String>>;
     async fn get_container_inspect(&self, engine: &str, id: &str) -> Result<String>;
     async fn configure_registries(&self, registries_csv: &str) -> Result<()>;
+    async fn prune_images(&self, engines: &[String], all: bool) -> Result<String>;
+    async fn tag_image(&self, engine: &str, image_id: &str, target_tag: &str) -> Result<()>;
+    async fn get_image_history(&self, engine: &str, image_id: &str) -> Result<Vec<String>>;
 }
 
 pub struct LocalEngines;
@@ -116,7 +119,7 @@ impl EngineClient for LocalEngines {
             let engine = engine.clone();
             handles.push(tokio::spawn(async move {
                 let mut cmd = Command::new(&engine);
-                cmd.args(["images", "--format", "json"]);
+                cmd.args(["images", "-a", "--format", "json"]);
                 let output = run_cmd_with_timeout(cmd, 5000).await;
                 (engine, output)
             }));
@@ -638,6 +641,75 @@ impl EngineClient for LocalEngines {
         .await??;
         Ok(())
     }
+
+    async fn prune_images(&self, engines: &[String], all: bool) -> Result<String> {
+        let mut messages = Vec::new();
+        let mut errors = Vec::new();
+
+        for engine in engines {
+            let mut cmd = Command::new(engine);
+            cmd.args(["image", "prune", "-f"]);
+            if all {
+                cmd.arg("-a");
+            }
+            let output = run_cmd_with_timeout(cmd, 15000).await;
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let trimmed = stdout.trim();
+                        if trimmed.is_empty() {
+                            messages.push(format!("{engine}: Pruned successfully"));
+                        } else {
+                            messages.push(format!("{engine}: {trimmed}"));
+                        }
+                    } else {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        errors.push(format!("{engine}: {}", stderr.trim()));
+                    }
+                }
+                Err(e) => {
+                    errors.push(format!("{engine}: {e}"));
+                }
+            }
+        }
+
+        if messages.is_empty() && !errors.is_empty() {
+            return Err(anyhow::anyhow!("{}", errors.join("; ")));
+        }
+
+        Ok(messages.join("\n"))
+    }
+
+    async fn tag_image(&self, engine: &str, image_id: &str, target_tag: &str) -> Result<()> {
+        let output = Command::new(engine)
+            .args(["tag", image_id, target_tag])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!(
+                "Failed to tag image {image_id} as {target_tag}: {}",
+                stderr.trim()
+            ));
+        }
+        Ok(())
+    }
+
+    async fn get_image_history(&self, engine: &str, image_id: &str) -> Result<Vec<String>> {
+        let output = Command::new(engine)
+            .args(["history", "--no-trunc", image_id])
+            .output()
+            .await?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut lines = Vec::new();
+        for line in stdout.lines() {
+            lines.push(line.to_string());
+        }
+        Ok(lines)
+    }
 }
 
 #[must_use]
@@ -934,6 +1006,7 @@ mod tests {
             names: Some(serde_json::Value::String("name1".into())),
             size: Some(serde_json::json!(100)),
             created: Some(serde_json::Value::Number(1_678_901_234.into())),
+            dangling: None,
             engine: "test".into(),
         };
         let names = img.get_names();

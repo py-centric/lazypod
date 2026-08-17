@@ -316,11 +316,26 @@ pub struct Image {
     pub size: Option<serde_json::Value>,
     #[serde(rename = "created", alias = "Created", default)]
     pub created: Option<serde_json::Value>,
+    #[serde(rename = "dangling", alias = "Dangling", default)]
+    pub dangling: Option<bool>,
     #[serde(skip)]
     pub engine: String,
 }
 
 impl Image {
+    #[must_use]
+    pub fn is_dangling(&self) -> bool {
+        if let Some(true) = self.dangling {
+            return true;
+        }
+        let names = self.get_names();
+        if names.is_empty() {
+            return true;
+        }
+        names
+            .iter()
+            .all(|n| n == "<none>:<none>" || n == "<none>" || n.starts_with("<none>"))
+    }
     #[must_use]
     pub fn get_names(&self) -> Vec<String> {
         let mut names = Vec::new();
@@ -898,6 +913,7 @@ mod tests {
             names: None,
             size,
             created: None,
+            dangling: None,
             engine: "docker".into(),
         };
         assert_eq!(img.get_size_str(), expected);
@@ -945,5 +961,64 @@ mod tests {
         assert!(rendered.contains("my_service"));
         assert!(rendered.contains("abc123def456"));
         assert!(rendered.contains("0.0.0.0:8080->80/tcp"));
+    }
+
+    #[test]
+    fn test_image_is_dangling() {
+        let tagged_image = Image {
+            id: "img1".into(),
+            parent_id: None,
+            repo_tags: Some(serde_json::json!(["alpine:latest"])),
+            repository: Some("alpine".into()),
+            tag: Some("latest".into()),
+            names: None,
+            size: None,
+            created: None,
+            dangling: None,
+            engine: "podman".into(),
+        };
+        assert!(!tagged_image.is_dangling());
+
+        let dangling_none_names = Image {
+            id: "img2".into(),
+            parent_id: None,
+            repo_tags: None,
+            repository: None,
+            tag: None,
+            names: Some(serde_json::json!(["<none>:<none>"])),
+            size: None,
+            created: None,
+            dangling: None,
+            engine: "podman".into(),
+        };
+        assert!(dangling_none_names.is_dangling());
+
+        let empty_names_image = Image {
+            id: "img3".into(),
+            parent_id: None,
+            repo_tags: None,
+            repository: None,
+            tag: None,
+            names: None,
+            size: None,
+            created: None,
+            dangling: None,
+            engine: "docker".into(),
+        };
+        assert!(empty_names_image.is_dangling());
+
+        let explicit_dangling = Image {
+            id: "img4".into(),
+            parent_id: None,
+            repo_tags: None,
+            repository: None,
+            tag: None,
+            names: Some(serde_json::json!(["some_name"])),
+            size: None,
+            created: None,
+            dangling: Some(true),
+            engine: "podman".into(),
+        };
+        assert!(explicit_dangling.is_dangling());
     }
 }

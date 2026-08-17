@@ -27,36 +27,45 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         EngineView::Docker => "Docker",
         EngineView::Podman => "Podman",
     };
-    
+
     let missing_str = {
         let active = app.get_active_engines();
         let mut missing = Vec::new();
         match app.engine_view {
             EngineView::Both => {
-                if !active.contains(&"docker".to_string()) { missing.push("Docker"); }
-                if !active.contains(&"podman".to_string()) { missing.push("Podman"); }
+                if !active.contains(&"docker".to_string()) {
+                    missing.push("Docker");
+                }
+                if !active.contains(&"podman".to_string()) {
+                    missing.push("Podman");
+                }
             }
             EngineView::Docker => {
-                if !active.contains(&"docker".to_string()) { missing.push("Docker"); }
+                if !active.contains(&"docker".to_string()) {
+                    missing.push("Docker");
+                }
             }
             EngineView::Podman => {
-                if !active.contains(&"podman".to_string()) { missing.push("Podman"); }
+                if !active.contains(&"podman".to_string()) {
+                    missing.push("Podman");
+                }
             }
         }
         if missing.is_empty() {
-            "".to_string()
+            String::new()
         } else {
             format!(" (Missing: {})", missing.join(", "))
         }
     };
 
     let title = format!(
-        " Lazypod | Active Engines: {}{} | '?' for help ",
-        active_str, missing_str
+        " Lazypod | Active Engines: {active_str}{missing_str} | Built by PyCentric | '?' for help "
     );
-    let title_block = Block::default()
-        .borders(Borders::ALL)
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+    let title_block = Block::default().borders(Borders::ALL).style(
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
     let title_paragraph = Paragraph::new(title).block(title_block);
     f.render_widget(title_paragraph, chunks[0]);
 
@@ -72,17 +81,23 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Status bar
     let (status, color) = if let Some(msg) = &app.status_message {
-        (format!("Error: {}", msg), Color::Red)
+        (format!("Error: {msg}"), Color::Red)
     } else if app.is_pulling {
-        ("Status: Pulling...".to_string(), Color::DarkGray)
+        (
+            "Status: Pulling... | PyCentric".to_string(),
+            Color::DarkGray,
+        )
     } else if let Some(form) = &app.search_image_form {
         if form.is_searching {
-            ("Status: Searching...".to_string(), Color::DarkGray)
+            (
+                "Status: Searching... | PyCentric".to_string(),
+                Color::DarkGray,
+            )
         } else {
-            ("Status: OK".to_string(), Color::DarkGray)
+            ("Status: OK | PyCentric".to_string(), Color::DarkGray)
         }
     } else {
-        ("Status: OK".to_string(), Color::DarkGray)
+        ("Status: OK | PyCentric".to_string(), Color::DarkGray)
     };
 
     let status_line = Paragraph::new(Line::from(vec![Span::styled(

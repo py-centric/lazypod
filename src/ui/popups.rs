@@ -7,13 +7,19 @@ use ratatui::{
 };
 
 use crate::app::App;
+use std::fmt::Write;
 
+#[allow(clippy::too_many_lines)]
 pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
     if let Some(inspect_output) = &app.inspect_popup {
         let block = Block::default()
             .title(" Inspect (Esc/g to close, j/k to scroll) ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD));
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            );
 
         let lines: Vec<Line> = inspect_output
             .lines()
@@ -32,7 +38,7 @@ pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
 
     if app.show_help_tooltip {
         let block = Block::default()
-            .title(" Help ")
+            .title(" Help | Lazypod (Built by PyCentric) ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow));
         let help_text = vec![
@@ -69,8 +75,10 @@ pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
             Line::from("  y/c        Copy selected log line to clipboard"),
             Line::from("  Esc        Exit logs focus"),
         ];
-        let p = Paragraph::new(help_text).block(block).alignment(Alignment::Left);
-        let popup_area = centered_rect(50, 65, area);
+        let p = Paragraph::new(help_text)
+            .block(block)
+            .alignment(Alignment::Left);
+        let popup_area = centered_rect(55, 70, area);
         f.render_widget(Clear, popup_area);
         f.render_widget(p, popup_area);
         return;
@@ -81,7 +89,9 @@ pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
             .title(" Pulling Image ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan));
-        let p = Paragraph::new("Please wait...").block(block).alignment(Alignment::Center);
+        let p = Paragraph::new("Please wait...")
+            .block(block)
+            .alignment(Alignment::Center);
         let popup_area = centered_rect(30, 20, area);
         f.render_widget(Clear, popup_area);
         f.render_widget(p, popup_area);
@@ -122,7 +132,10 @@ pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
             .title(" Direct Pull ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan));
-        let text = format!("Image name:\n{}\n\n(Enter to pull, Esc to cancel)", form.image);
+        let text = format!(
+            "Image name:\n{}\n\n(Enter to pull, Esc to cancel)",
+            form.image
+        );
         let p = Paragraph::new(text).block(block);
         let popup_area = centered_rect(50, 30, area);
         f.render_widget(Clear, popup_area);
@@ -205,7 +218,7 @@ pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
                 },
             )),
             Line::from(Span::styled(
-                format!("Share PID: {} (Space to toggle)", pid_marker),
+                format!("Share PID: {pid_marker} (Space to toggle)"),
                 if form.active_field == 2 {
                     Style::default().fg(Color::Yellow)
                 } else {
@@ -213,7 +226,7 @@ pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
                 },
             )),
             Line::from(Span::styled(
-                format!("Share Net: {} (Space to toggle)", net_marker),
+                format!("Share Net: {net_marker} (Space to toggle)"),
                 if form.active_field == 3 {
                     Style::default().fg(Color::Yellow)
                 } else {
@@ -289,23 +302,28 @@ pub fn draw_popups(f: &mut Frame, app: &mut App, area: Rect) {
         let mut msg = "Are you sure you want to perform this action?".to_string();
         if let Some((tab, _engine, id, _action)) = &app.pending_action {
             let related = app.get_related_resources(tab, id);
-            if !related.is_empty() {
+            if related.is_empty() {
+                msg.push_str("\n\nPress 'y' to continue, 'n' to cancel.");
+            } else {
                 msg.push_str("\n\nThis will also affect:");
                 for (rt, _, rid) in related {
-                    msg.push_str(&format!("\n - {:?} {}", rt, rid));
+                    let _ = write!(msg, "\n - {rt:?} {rid}");
                 }
-                msg.push_str("\n\nPress 'y' to continue, 'a' to apply to all related, 'n' to cancel.");
-            } else {
-                msg.push_str("\n\nPress 'y' to continue, 'n' to cancel.");
+                msg.push_str(
+                    "\n\nPress 'y' to continue, 'a' to apply to all related, 'n' to cancel.",
+                );
             }
         }
-        let p = Paragraph::new(msg).block(block).alignment(Alignment::Center);
+        let p = Paragraph::new(msg)
+            .block(block)
+            .alignment(Alignment::Center);
         let popup_area = centered_rect(50, 30, area);
         f.render_widget(Clear, popup_area);
         f.render_widget(p, popup_area);
     }
 }
 
+#[must_use]
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)

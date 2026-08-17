@@ -8,6 +8,7 @@ use ratatui::{
 
 use crate::app::{App, Tab};
 
+#[allow(clippy::too_many_lines)]
 pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -27,15 +28,12 @@ pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 format!("\nPorts: {}", ports.join(", "))
             };
-            format!(
-                "ID: {}\nImage: {}\nCommand: {}\nStatus: {}\nEngine:{}{}",
-                c.id,
-                c.image,
-                c.get_command(),
-                c.get_status_str(),
-                c.engine,
-                ports_str
-            )
+            let cmd = c.get_command();
+            let status = c.get_status_str();
+            let engine = &c.engine;
+            let id = &c.id;
+            let image = &c.image;
+            format!("ID: {id}\nImage: {image}\nCommand: {cmd}\nStatus: {status}\nEngine: {engine}{ports_str}")
         }),
         Tab::Stopped => app.stopped.get(app.selected_index).map(|c| {
             let ports = c.get_port_strings();
@@ -44,37 +42,34 @@ pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 format!("\nPorts: {}", ports.join(", "))
             };
-            format!(
-                "ID: {}\nImage: {}\nCommand: {}\nStatus: {}\nEngine:{}{}",
-                c.id,
-                c.image,
-                c.get_command(),
-                c.get_status_str(),
-                c.engine,
-                ports_str
-            )
+            let cmd = c.get_command();
+            let status = c.get_status_str();
+            let engine = &c.engine;
+            let id = &c.id;
+            let image = &c.image;
+            format!("ID: {id}\nImage: {image}\nCommand: {cmd}\nStatus: {status}\nEngine: {engine}{ports_str}")
         }),
         Tab::Images => app.images.get(app.selected_index).map(|i| {
-            format!(
-                "ID: {}\nTags: {}\nSize: {}\nCreated: {}\nEngine: {}",
-                i.id,
-                i.get_names().join(", "),
-                i.get_size_str(),
-                i.get_created_str(),
-                i.engine
-            )
+            let tags = i.get_names().join(", ");
+            let size = i.get_size_str();
+            let created = i.get_created_str();
+            let engine = &i.engine;
+            let id = &i.id;
+            format!("ID: {id}\nTags: {tags}\nSize: {size}\nCreated: {created}\nEngine: {engine}")
         }),
         Tab::Volumes => app.volumes.get(app.selected_index).map(|v| {
-            format!(
-                "Name: {}\nDriver: {}\nMountpoint: {}\nEngine: {}",
-                v.name, v.driver, v.mountpoint, v.engine
-            )
+            let name = &v.name;
+            let driver = &v.driver;
+            let mountpoint = &v.mountpoint;
+            let engine = &v.engine;
+            format!("Name: {name}\nDriver: {driver}\nMountpoint: {mountpoint}\nEngine: {engine}")
         }),
         Tab::Networks => app.networks.get(app.selected_index).map(|n| {
-            format!(
-                "Name: {}\nID: {}\nDriver: {}\nEngine: {}",
-                n.name, n.id, n.driver, n.engine
-            )
+            let name = &n.name;
+            let id = &n.id;
+            let driver = &n.driver;
+            let engine = &n.engine;
+            format!("Name: {name}\nID: {id}\nDriver: {driver}\nEngine: {engine}")
         }),
         Tab::Pods => app.pods.get(app.selected_index).map(|p| {
             // Use containers directly from pod ps output
@@ -85,34 +80,49 @@ pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
                 for c in &p.containers {
                     let name = c.get_name();
                     let status = c.get_status_str();
-                    lines.push(format!("  {} [{}] {}", name, &c.id[..std::cmp::min(12, c.id.len())], status));
+                    lines.push(format!(
+                        "  {} [{}] {}",
+                        name,
+                        &c.id[..std::cmp::min(12, c.id.len())],
+                        status
+                    ));
                 }
                 lines.join("\n")
             };
             // Aggregate ports from containers in this pod (matched by pod_id in container list)
-            let all_ports: Vec<String> = app.running.iter()
+            let all_ports: Vec<String> = app
+                .running
+                .iter()
                 .chain(app.stopped.iter())
                 .filter(|c| c.pod_id.as_deref() == Some(&p.id))
-                .flat_map(|c| c.get_port_strings())
+                .flat_map(super::super::podman::models::Container::get_port_strings)
                 .collect();
             let ports_str = if all_ports.is_empty() {
                 String::new()
             } else {
                 format!("\nPorts: {}", all_ports.join(", "))
             };
+            let name = &p.name;
+            let id = &p.id;
+            let status = &p.status;
+            let created = p.get_created_str();
+            let engine = &p.engine;
             format!(
-                "Name: {}\nID: {}\nStatus: {}\nCreated: {}\nEngine: {}\nContainers:\n{}{}",
-                p.name, p.id, p.status, p.get_created_str(), p.engine, containers_str, ports_str
+                "Name: {name}\nID: {id}\nStatus: {status}\nCreated: {created}\nEngine: {engine}\nContainers:\n{containers_str}{ports_str}"
             )
         }),
     }
     .unwrap_or_else(|| "Nothing selected.".to_string());
 
-    let p = Paragraph::new(info_text).block(info_block).wrap(Wrap { trim: true });
+    let p = Paragraph::new(info_text)
+        .block(info_block)
+        .wrap(Wrap { trim: true });
     f.render_widget(p, chunks[0]);
 
     let logs_border_style = if app.logs_focused {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
@@ -136,15 +146,13 @@ pub fn draw_details(f: &mut Frame, app: &mut App, area: Rect) {
             .iter()
             .map(|l| ListItem::new(Line::from(l.clone())))
             .collect();
-            
-        let list = List::new(items)
-            .block(logs_block)
-            .highlight_style(
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            );
-            
+
+        let list = List::new(items).block(logs_block).highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
+
         f.render_stateful_widget(list, chunks[1], &mut app.logs_state);
     } else {
         let hint = match app.active_tab {

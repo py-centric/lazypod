@@ -41,6 +41,8 @@ pub struct LocalEngines;
 impl EngineClient for LocalEngines {
     async fn get_containers(&self, engines: &[String]) -> Result<Vec<Container>> {
         let mut all_containers = Vec::new();
+        let mut errors = Vec::new();
+
         for engine in engines {
             let mut cmd = Command::new(engine);
             cmd.args(["ps", "-a", "--format", "json"]);
@@ -50,104 +52,160 @@ impl EngineClient for LocalEngines {
             }
             let output = cmd.output().await;
 
-            if let Ok(out) = output {
-                if out.status.success() {
-                    let mut parsed: Vec<Container> = parse_json_output(&out.stdout);
-                    for item in &mut parsed {
-                        item.engine.clone_from(engine);
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        let mut parsed: Vec<Container> = parse_json_output(&out.stdout);
+                        for item in &mut parsed {
+                            item.engine.clone_from(engine);
+                        }
+                        all_containers.extend(parsed);
+                    } else {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        if !stderr.trim().is_empty() {
+                            tracing::warn!("{engine} ps error: {}", stderr.trim());
+                            errors.push(format!("{engine}: {}", stderr.trim()));
+                        }
                     }
-                    all_containers.extend(parsed);
-                } else {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    if !stderr.trim().is_empty() {
-                        return Err(anyhow::anyhow!("{}: {}", engine, stderr.trim()));
-                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to execute {engine}: {e}");
+                    errors.push(format!("{engine}: {e}"));
                 }
             }
         }
+
+        if all_containers.is_empty() && !errors.is_empty() && errors.len() == engines.len() {
+            return Err(anyhow::anyhow!("{}", errors.join("; ")));
+        }
+
         Ok(all_containers)
     }
 
     async fn get_images(&self, engines: &[String]) -> Result<Vec<Image>> {
         let mut all_images = Vec::new();
+        let mut errors = Vec::new();
+
         for engine in engines {
             let output = Command::new(engine)
                 .args(["images", "--format", "json"])
                 .output()
                 .await;
 
-            if let Ok(out) = output {
-                if out.status.success() {
-                    let mut parsed: Vec<Image> = parse_json_output(&out.stdout);
-                    for item in &mut parsed {
-                        item.engine.clone_from(engine);
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        let mut parsed: Vec<Image> = parse_json_output(&out.stdout);
+                        for item in &mut parsed {
+                            item.engine.clone_from(engine);
+                        }
+                        all_images.extend(parsed);
+                    } else {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        if !stderr.trim().is_empty() {
+                            tracing::warn!("{engine} images error: {}", stderr.trim());
+                            errors.push(format!("{engine}: {}", stderr.trim()));
+                        }
                     }
-                    all_images.extend(parsed);
-                } else {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    if !stderr.trim().is_empty() {
-                        return Err(anyhow::anyhow!("{}: {}", engine, stderr.trim()));
-                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to execute {engine}: {e}");
+                    errors.push(format!("{engine}: {e}"));
                 }
             }
         }
+
+        if all_images.is_empty() && !errors.is_empty() && errors.len() == engines.len() {
+            return Err(anyhow::anyhow!("{}", errors.join("; ")));
+        }
+
         Ok(all_images)
     }
 
     async fn get_volumes(&self, engines: &[String]) -> Result<Vec<Volume>> {
         let mut all_volumes = Vec::new();
+        let mut errors = Vec::new();
+
         for engine in engines {
             let output = Command::new(engine)
                 .args(["volume", "ls", "--format", "json"])
                 .output()
                 .await;
 
-            if let Ok(out) = output {
-                if out.status.success() {
-                    let mut parsed: Vec<Volume> = parse_json_output(&out.stdout);
-                    for item in &mut parsed {
-                        item.engine.clone_from(engine);
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        let mut parsed: Vec<Volume> = parse_json_output(&out.stdout);
+                        for item in &mut parsed {
+                            item.engine.clone_from(engine);
+                        }
+                        all_volumes.extend(parsed);
+                    } else {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        if !stderr.trim().is_empty() {
+                            tracing::warn!("{engine} volume ls error: {}", stderr.trim());
+                            errors.push(format!("{engine}: {}", stderr.trim()));
+                        }
                     }
-                    all_volumes.extend(parsed);
-                } else {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    if !stderr.trim().is_empty() {
-                        return Err(anyhow::anyhow!("{}: {}", engine, stderr.trim()));
-                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to execute {engine}: {e}");
+                    errors.push(format!("{engine}: {e}"));
                 }
             }
         }
+
+        if all_volumes.is_empty() && !errors.is_empty() && errors.len() == engines.len() {
+            return Err(anyhow::anyhow!("{}", errors.join("; ")));
+        }
+
         Ok(all_volumes)
     }
 
     async fn get_networks(&self, engines: &[String]) -> Result<Vec<Network>> {
         let mut all_networks = Vec::new();
+        let mut errors = Vec::new();
+
         for engine in engines {
             let output = Command::new(engine)
                 .args(["network", "ls", "--format", "json"])
                 .output()
                 .await;
 
-            if let Ok(out) = output {
-                if out.status.success() {
-                    let mut parsed: Vec<Network> = parse_json_output(&out.stdout);
-                    for item in &mut parsed {
-                        item.engine.clone_from(engine);
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        let mut parsed: Vec<Network> = parse_json_output(&out.stdout);
+                        for item in &mut parsed {
+                            item.engine.clone_from(engine);
+                        }
+                        all_networks.extend(parsed);
+                    } else {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        if !stderr.trim().is_empty() {
+                            tracing::warn!("{engine} network ls error: {}", stderr.trim());
+                            errors.push(format!("{engine}: {}", stderr.trim()));
+                        }
                     }
-                    all_networks.extend(parsed);
-                } else {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    if !stderr.trim().is_empty() {
-                        return Err(anyhow::anyhow!("{}: {}", engine, stderr.trim()));
-                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to execute {engine}: {e}");
+                    errors.push(format!("{engine}: {e}"));
                 }
             }
         }
+
+        if all_networks.is_empty() && !errors.is_empty() && errors.len() == engines.len() {
+            return Err(anyhow::anyhow!("{}", errors.join("; ")));
+        }
+
         Ok(all_networks)
     }
 
     async fn get_pods(&self, engines: &[String]) -> Result<Vec<Pod>> {
         let mut all_pods = Vec::new();
+        let mut errors = Vec::new();
+
         for engine in engines {
             // Docker doesn't have native pod support; only Podman does
             if engine == "docker" {
@@ -158,21 +216,33 @@ impl EngineClient for LocalEngines {
                 .output()
                 .await;
 
-            if let Ok(out) = output {
-                if out.status.success() {
-                    let mut parsed: Vec<Pod> = parse_json_output(&out.stdout);
-                    for item in &mut parsed {
-                        item.engine.clone_from(engine);
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        let mut parsed: Vec<Pod> = parse_json_output(&out.stdout);
+                        for item in &mut parsed {
+                            item.engine.clone_from(engine);
+                        }
+                        all_pods.extend(parsed);
+                    } else {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        if !stderr.trim().is_empty() {
+                            tracing::warn!("{engine} pod ps error: {}", stderr.trim());
+                            errors.push(format!("{engine}: {}", stderr.trim()));
+                        }
                     }
-                    all_pods.extend(parsed);
-                } else {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    if !stderr.trim().is_empty() {
-                        return Err(anyhow::anyhow!("{}: {}", engine, stderr.trim()));
-                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to execute {engine}: {e}");
+                    errors.push(format!("{engine}: {e}"));
                 }
             }
         }
+
+        if all_pods.is_empty() && !errors.is_empty() && engines.contains(&"podman".to_string()) {
+            return Err(anyhow::anyhow!("{}", errors.join("; ")));
+        }
+
         Ok(all_pods)
     }
 
@@ -483,17 +553,26 @@ pub fn parse_json_output<T: serde::de::DeserializeOwned>(stdout: &[u8]) -> Vec<T
         return vec![];
     }
 
+    // Try parsing as a top-level JSON array first (Podman format: `[ {...}, {...} ]`)
     if let Ok(val) = serde_json::from_slice::<serde_json::Value>(stdout) {
         if let Some(arr) = val.as_array() {
             return arr
                 .iter()
                 .filter_map(|v| serde_json::from_value(v.clone()).ok())
                 .collect();
-        } else if let Ok(item) = serde_json::from_value::<T>(val) {
-            return vec![item];
         }
     }
 
+    // Next try stream / newline-delimited JSON (Docker format: `{"ID":"1"}\n{"ID":"2"}\n`)
+    let stream_items: Vec<T> = serde_json::Deserializer::from_slice(stdout)
+        .into_iter::<T>()
+        .filter_map(Result::ok)
+        .collect();
+    if !stream_items.is_empty() {
+        return stream_items;
+    }
+
+    // Fallback: line-by-line parsing
     let text = String::from_utf8_lossy(stdout);
     let mut results = Vec::new();
     for line in text.lines() {
@@ -760,7 +839,7 @@ mod tests {
             repository: None,
             tag: None,
             names: Some(serde_json::Value::String("name1".into())),
-            size: Some(100),
+            size: Some(serde_json::json!(100)),
             created: Some(serde_json::Value::Number(1_678_901_234.into())),
             engine: "test".into(),
         };
@@ -782,5 +861,20 @@ mod tests {
         let nets: Vec<Network> = parse_json_output(partial);
         assert_eq!(nets.len(), 1);
         assert_eq!(nets[0].name, "ok");
+
+        // Docker stream format (newline-delimited JSON objects)
+        let stream = b"{\"name\": \"net1\", \"id\": \"1\"}\n{\"name\": \"net2\", \"id\": \"2\"}\n";
+        let stream_nets: Vec<Network> = parse_json_output(stream);
+        assert_eq!(stream_nets.len(), 2);
+        assert_eq!(stream_nets[0].name, "net1");
+        assert_eq!(stream_nets[1].name, "net2");
+
+        // Docker images with string sizes in stream format
+        let img_stream =
+            b"{\"id\": \"i1\", \"Size\": \"50MB\"}\n{\"id\": \"i2\", \"Size\": \"1.2GB\"}\n";
+        let images: Vec<Image> = parse_json_output(img_stream);
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].get_size_str(), "50MB");
+        assert_eq!(images[1].get_size_str(), "1.2GB");
     }
 }

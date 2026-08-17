@@ -66,7 +66,7 @@ fn test_ui_draw_with_data() {
         repository: None,
         tag: None,
         names: None,
-        size: Some(35_000_000),
+        size: Some(serde_json::json!(35_000_000)),
         created: Some(serde_json::Value::Number(1_700_000_000.into())),
         engine: "docker".to_string(),
     });

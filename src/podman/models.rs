@@ -312,8 +312,8 @@ pub struct Image {
     pub tag: Option<String>,
     #[serde(rename = "names", alias = "Names", default)]
     pub names: Option<serde_json::Value>,
-    #[serde(rename = "size", alias = "Size", default)]
-    pub size: Option<i64>,
+    #[serde(rename = "size", alias = "Size", alias = "VirtualSize", default)]
+    pub size: Option<serde_json::Value>,
     #[serde(rename = "created", alias = "Created", default)]
     pub created: Option<serde_json::Value>,
     #[serde(skip)]
@@ -351,18 +351,26 @@ impl Image {
     #[allow(clippy::cast_precision_loss)]
     #[must_use]
     pub fn get_size_str(&self) -> String {
-        let size = self.size.unwrap_or(0);
-        if size == 0 {
-            return "0 B".to_string();
+        if let Some(v) = &self.size {
+            if let Some(s) = v.as_str() {
+                if !s.is_empty() {
+                    return s.to_string();
+                }
+            } else if let Some(n) = v.as_i64() {
+                if n <= 0 {
+                    return "0 B".to_string();
+                }
+                let units = ["B", "KB", "MB", "GB", "TB"];
+                let mut size = n as f64;
+                let mut unit_idx = 0;
+                while size >= 1024.0 && unit_idx < units.len() - 1 {
+                    size /= 1024.0;
+                    unit_idx += 1;
+                }
+                return format!("{size:.2} {}", units[unit_idx]);
+            }
         }
-        let units = ["B", "KB", "MB", "GB", "TB"];
-        let mut size = size as f64;
-        let mut unit_idx = 0;
-        while size >= 1024.0 && unit_idx < units.len() - 1 {
-            size /= 1024.0;
-            unit_idx += 1;
-        }
-        format!("{:.2} {}", size, units[unit_idx])
+        "0 B".to_string()
     }
 
     #[allow(clippy::cast_sign_loss)]
@@ -874,12 +882,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Some(500), "500.00 B")]
-    #[case(Some(1024), "1.00 KB")]
-    #[case(Some(1_048_576), "1.00 MB")]
-    #[case(Some(1_073_741_824), "1.00 GB")]
+    #[case(Some(serde_json::json!(500)), "500.00 B")]
+    #[case(Some(serde_json::json!(1024)), "1.00 KB")]
+    #[case(Some(serde_json::json!(1_048_576)), "1.00 MB")]
+    #[case(Some(serde_json::json!(1_073_741_824)), "1.00 GB")]
+    #[case(Some(serde_json::json!("77.8MB")), "77.8MB")]
     #[case(None, "0 B")]
-    fn test_image_size_str(#[case] size: Option<i64>, #[case] expected: &str) {
+    fn test_image_size_str(#[case] size: Option<serde_json::Value>, #[case] expected: &str) {
         let img = Image {
             id: "i1".into(),
             parent_id: None,

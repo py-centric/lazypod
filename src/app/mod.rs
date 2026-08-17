@@ -84,6 +84,9 @@ impl App {
         {
             available_engines.push("podman".to_string());
         }
+        if available_engines.is_empty() {
+            available_engines = vec!["docker".to_string(), "podman".to_string()];
+        }
 
         Self {
             should_quit: false,
@@ -447,7 +450,7 @@ mod tests {
                 repository: None,
                 tag: None,
                 names: None,
-                size: Some(5000),
+                size: Some(serde_json::json!(5000)),
                 created: Some(serde_json::Value::Number(1_678_901_234.into())),
                 engine: "mock".into(),
             }])

@@ -70,13 +70,6 @@ impl App {
     #[must_use]
     pub fn new() -> Self {
         let mut available_engines = Vec::new();
-        if std::process::Command::new("docker")
-            .arg("--version")
-            .output()
-            .is_ok()
-        {
-            available_engines.push("docker".to_string());
-        }
         if std::process::Command::new("podman")
             .arg("--version")
             .output()
@@ -84,8 +77,15 @@ impl App {
         {
             available_engines.push("podman".to_string());
         }
+        if std::process::Command::new("docker")
+            .arg("--version")
+            .output()
+            .is_ok()
+        {
+            available_engines.push("docker".to_string());
+        }
         if available_engines.is_empty() {
-            available_engines = vec!["docker".to_string(), "podman".to_string()];
+            available_engines = vec!["podman".to_string(), "docker".to_string()];
         }
 
         Self {

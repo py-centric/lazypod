@@ -8,23 +8,30 @@ pub fn trigger_refresh_data(app: &mut App) {
     let tx = app.action_tx.clone();
 
     tokio::spawn(async move {
-        let mut running = Vec::new();
-        let mut stopped = Vec::new();
-        let containers_result = client.get_containers(&engines).await;
-        match containers_result {
-            Ok(c) => {
-                running = c.iter().filter(|x| x.is_running()).cloned().collect();
-                stopped = c.iter().filter(|x| !x.is_running()).cloned().collect();
-            }
+        let (containers_res, images_res, volumes_res, networks_res, pods_res) = tokio::join!(
+            client.get_containers(&engines),
+            client.get_images(&engines),
+            client.get_volumes(&engines),
+            client.get_networks(&engines),
+            client.get_pods(&engines)
+        );
+
+        let (running, stopped) = match containers_res {
+            Ok(c) => (
+                c.iter().filter(|x| x.is_running()).cloned().collect(),
+                c.iter().filter(|x| !x.is_running()).cloned().collect(),
+            ),
             Err(e) => {
                 if let Some(ref tx) = tx {
                     let _ = tx.send(Action::Error {
                         message: format!("Containers: {e}"),
                     });
                 }
+                (Vec::new(), Vec::new())
             }
-        }
-        let images = match client.get_images(&engines).await {
+        };
+
+        let images = match images_res {
             Ok(v) => v,
             Err(e) => {
                 if let Some(ref tx) = tx {
@@ -35,7 +42,8 @@ pub fn trigger_refresh_data(app: &mut App) {
                 Vec::new()
             }
         };
-        let volumes = match client.get_volumes(&engines).await {
+
+        let volumes = match volumes_res {
             Ok(v) => v,
             Err(e) => {
                 if let Some(ref tx) = tx {
@@ -46,7 +54,8 @@ pub fn trigger_refresh_data(app: &mut App) {
                 Vec::new()
             }
         };
-        let networks = match client.get_networks(&engines).await {
+
+        let networks = match networks_res {
             Ok(v) => v,
             Err(e) => {
                 if let Some(ref tx) = tx {
@@ -57,7 +66,8 @@ pub fn trigger_refresh_data(app: &mut App) {
                 Vec::new()
             }
         };
-        let pods = match client.get_pods(&engines).await {
+
+        let pods = match pods_res {
             Ok(v) => v,
             Err(e) => {
                 if let Some(ref tx) = tx {

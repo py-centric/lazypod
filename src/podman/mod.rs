@@ -37,27 +37,54 @@ pub trait EngineClient: Send + Sync {
 
 pub struct LocalEngines;
 
+async fn run_cmd_with_timeout(
+    mut cmd: Command,
+    timeout_ms: u64,
+) -> std::io::Result<std::process::Output> {
+    match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), cmd.output()).await {
+        Ok(res) => res,
+        Err(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "engine command timed out",
+        )),
+    }
+}
+
 #[async_trait::async_trait]
 impl EngineClient for LocalEngines {
     async fn get_containers(&self, engines: &[String]) -> Result<Vec<Container>> {
+        let mut handles = Vec::new();
+        for engine in engines {
+            let engine = engine.clone();
+            handles.push(tokio::spawn(async move {
+                let mut cmd = Command::new(&engine);
+                cmd.args(["ps", "-a", "--format", "json"]);
+                // Podman: include --pod flag so PodID field is populated
+                if engine == "podman" {
+                    cmd.arg("--pod");
+                }
+                let output = run_cmd_with_timeout(cmd, 5000).await;
+                (engine, output)
+            }));
+        }
+
+        let mut results = Vec::new();
+        for handle in handles {
+            if let Ok(res) = handle.await {
+                results.push(res);
+            }
+        }
+
         let mut all_containers = Vec::new();
         let mut errors = Vec::new();
 
-        for engine in engines {
-            let mut cmd = Command::new(engine);
-            cmd.args(["ps", "-a", "--format", "json"]);
-            // Podman: include --pod flag so PodID field is populated
-            if engine == "podman" {
-                cmd.arg("--pod");
-            }
-            let output = cmd.output().await;
-
+        for (engine, output) in results {
             match output {
                 Ok(out) => {
                     if out.status.success() {
                         let mut parsed: Vec<Container> = parse_json_output(&out.stdout);
                         for item in &mut parsed {
-                            item.engine.clone_from(engine);
+                            item.engine.clone_from(&engine);
                         }
                         all_containers.extend(parsed);
                     } else {
@@ -83,21 +110,34 @@ impl EngineClient for LocalEngines {
     }
 
     async fn get_images(&self, engines: &[String]) -> Result<Vec<Image>> {
+        let mut handles = Vec::new();
+        for engine in engines {
+            let engine = engine.clone();
+            handles.push(tokio::spawn(async move {
+                let mut cmd = Command::new(&engine);
+                cmd.args(["images", "--format", "json"]);
+                let output = run_cmd_with_timeout(cmd, 5000).await;
+                (engine, output)
+            }));
+        }
+
+        let mut results = Vec::new();
+        for handle in handles {
+            if let Ok(res) = handle.await {
+                results.push(res);
+            }
+        }
+
         let mut all_images = Vec::new();
         let mut errors = Vec::new();
 
-        for engine in engines {
-            let output = Command::new(engine)
-                .args(["images", "--format", "json"])
-                .output()
-                .await;
-
+        for (engine, output) in results {
             match output {
                 Ok(out) => {
                     if out.status.success() {
                         let mut parsed: Vec<Image> = parse_json_output(&out.stdout);
                         for item in &mut parsed {
-                            item.engine.clone_from(engine);
+                            item.engine.clone_from(&engine);
                         }
                         all_images.extend(parsed);
                     } else {
@@ -123,21 +163,34 @@ impl EngineClient for LocalEngines {
     }
 
     async fn get_volumes(&self, engines: &[String]) -> Result<Vec<Volume>> {
+        let mut handles = Vec::new();
+        for engine in engines {
+            let engine = engine.clone();
+            handles.push(tokio::spawn(async move {
+                let mut cmd = Command::new(&engine);
+                cmd.args(["volume", "ls", "--format", "json"]);
+                let output = run_cmd_with_timeout(cmd, 5000).await;
+                (engine, output)
+            }));
+        }
+
+        let mut results = Vec::new();
+        for handle in handles {
+            if let Ok(res) = handle.await {
+                results.push(res);
+            }
+        }
+
         let mut all_volumes = Vec::new();
         let mut errors = Vec::new();
 
-        for engine in engines {
-            let output = Command::new(engine)
-                .args(["volume", "ls", "--format", "json"])
-                .output()
-                .await;
-
+        for (engine, output) in results {
             match output {
                 Ok(out) => {
                     if out.status.success() {
                         let mut parsed: Vec<Volume> = parse_json_output(&out.stdout);
                         for item in &mut parsed {
-                            item.engine.clone_from(engine);
+                            item.engine.clone_from(&engine);
                         }
                         all_volumes.extend(parsed);
                     } else {
@@ -163,21 +216,34 @@ impl EngineClient for LocalEngines {
     }
 
     async fn get_networks(&self, engines: &[String]) -> Result<Vec<Network>> {
+        let mut handles = Vec::new();
+        for engine in engines {
+            let engine = engine.clone();
+            handles.push(tokio::spawn(async move {
+                let mut cmd = Command::new(&engine);
+                cmd.args(["network", "ls", "--format", "json"]);
+                let output = run_cmd_with_timeout(cmd, 5000).await;
+                (engine, output)
+            }));
+        }
+
+        let mut results = Vec::new();
+        for handle in handles {
+            if let Ok(res) = handle.await {
+                results.push(res);
+            }
+        }
+
         let mut all_networks = Vec::new();
         let mut errors = Vec::new();
 
-        for engine in engines {
-            let output = Command::new(engine)
-                .args(["network", "ls", "--format", "json"])
-                .output()
-                .await;
-
+        for (engine, output) in results {
             match output {
                 Ok(out) => {
                     if out.status.success() {
                         let mut parsed: Vec<Network> = parse_json_output(&out.stdout);
                         for item in &mut parsed {
-                            item.engine.clone_from(engine);
+                            item.engine.clone_from(&engine);
                         }
                         all_networks.extend(parsed);
                     } else {
@@ -203,25 +269,47 @@ impl EngineClient for LocalEngines {
     }
 
     async fn get_pods(&self, engines: &[String]) -> Result<Vec<Pod>> {
+        let mut handles = Vec::new();
+        for engine in engines {
+            let engine = engine.clone();
+            handles.push(tokio::spawn(async move {
+                if engine == "docker" {
+                    return (
+                        engine,
+                        Ok(std::process::Output {
+                            status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                            stdout: Vec::new(),
+                            stderr: Vec::new(),
+                        }),
+                    );
+                }
+                let mut cmd = Command::new(&engine);
+                cmd.args(["pod", "ps", "--format", "json"]);
+                let output = run_cmd_with_timeout(cmd, 5000).await;
+                (engine, output)
+            }));
+        }
+
+        let mut results = Vec::new();
+        for handle in handles {
+            if let Ok(res) = handle.await {
+                results.push(res);
+            }
+        }
+
         let mut all_pods = Vec::new();
         let mut errors = Vec::new();
 
-        for engine in engines {
-            // Docker doesn't have native pod support; only Podman does
+        for (engine, output) in results {
             if engine == "docker" {
                 continue;
             }
-            let output = Command::new(engine)
-                .args(["pod", "ps", "--format", "json"])
-                .output()
-                .await;
-
             match output {
                 Ok(out) => {
                     if out.status.success() {
                         let mut parsed: Vec<Pod> = parse_json_output(&out.stdout);
                         for item in &mut parsed {
-                            item.engine.clone_from(engine);
+                            item.engine.clone_from(&engine);
                         }
                         all_pods.extend(parsed);
                     } else {

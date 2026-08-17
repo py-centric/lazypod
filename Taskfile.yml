@@ -1,0 +1,77 @@
+version: '3'
+
+vars:
+  PROJECT_NAME: lazypod
+  CARGO_BIN: cargo
+  CONTAINER_CLI:
+    sh: command -v podman >/dev/null 2>&1 && echo "podman" || echo "docker"
+  CONTAINER_COMPOSE:
+    sh: command -v podman-compose >/dev/null 2>&1 && echo "podman-compose" || echo "docker compose"
+  MODE: '{{.MODE | default "local"}}'
+  LOG_LEVEL: '{{.LOG_LEVEL | default "info"}}'
+
+tasks:
+  default:
+    desc: List all available tasks
+    cmds:
+      - 'command -v go-task >/dev/null 2>&1 && go-task --list || task --list'
+    silent: true
+
+  build:
+    desc: Build the application release binary
+    cmds:
+      - '{{.CARGO_BIN}} build --release'
+
+  build:debug:
+    desc: Build the application debug binary
+    cmds:
+      - '{{.CARGO_BIN}} build'
+
+  run:
+    desc: Run Lazypod locally
+    cmds:
+      - '{{.CARGO_BIN}} run'
+
+  test:
+    desc: Run unit and integration tests
+    cmds:
+      - '{{.CARGO_BIN}} test --verbose'
+
+  lint:
+    desc: Run Clippy static analysis with strict pedantic checks
+    cmds:
+      - '{{.CARGO_BIN}} clippy -- -D warnings -W clippy::pedantic'
+
+  fmt:
+    desc: Format source code with rustfmt
+    cmds:
+      - '{{.CARGO_BIN}} fmt --all'
+
+  fmt:check:
+    desc: Check formatting without modifying files
+    cmds:
+      - '{{.CARGO_BIN}} fmt --all -- --check'
+
+  audit:
+    desc: Run cargo audit for dependency security vulnerabilities
+    cmds:
+      - 'which cargo-audit >/dev/null 2>&1 || {{.CARGO_BIN}} install cargo-audit'
+      - 'cargo audit'
+
+  docs:
+    desc: Build Sphinx HTML documentation portal
+    cmds:
+      - 'cd docs && make html'
+
+  clean:
+    desc: Clean build artifacts and caches
+    cmds:
+      - '{{.CARGO_BIN}} clean'
+      - 'rm -rf docs/_build'
+
+  'container:detect':
+    desc: Display auto-detected container runtime engine
+    cmds:
+      - 'echo "Detected container runtime engine: {{.CONTAINER_CLI}}"'
+      - 'echo "Detected compose tool: {{.CONTAINER_COMPOSE}}"'
+    silent: true

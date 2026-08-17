@@ -99,9 +99,9 @@ Lazypod uses a strict branching pattern to determine version bumps according to 
 
 When creating a new branch, use the following prefixes:
 
-- **Patch Version Bumps (vX.Y.+1):** `fix/*` or `bugfix/*` — backwards-compatible bug fixes.
-- **Minor Version Bumps (vX.+1.0):** `feat/*` or `feature/*` — new functionality in a backwards-compatible manner.
-- **Major Version Bumps (v+1.0.0):** `release/*` or `breaking/*` — breaking API/usage changes.
+- **Patch Version Bumps (vX.Y.+1):** `fix/*` or `bugfix/*` - backwards-compatible bug fixes.
+- **Minor Version Bumps (vX.+1.0):** `feat/*` or `feature/*` - new functionality in a backwards-compatible manner.
+- **Major Version Bumps (v+1.0.0):** `release/*` or `breaking/*` - breaking API/usage changes.
 
 ## Pull Request Requirements
 

@@ -57,6 +57,9 @@ pub struct App {
     pub inspect_popup: Option<String>,
     pub inspect_scroll: u16,
     pub create_pod_form: Option<CreatePodForm>,
+    pub filter_dangling_images: bool,
+    pub tag_image_form: Option<TagImageForm>,
+    pub image_history: Vec<String>,
 }
 
 impl Default for App {
@@ -125,6 +128,19 @@ impl App {
             inspect_popup: None,
             inspect_scroll: 0,
             create_pod_form: None,
+            filter_dangling_images: false,
+            tag_image_form: None,
+            image_history: Vec::new(),
+        }
+    }
+
+    /// Get filtered list of images based on `filter_dangling_images` toggle.
+    #[must_use]
+    pub fn get_filtered_images(&self) -> Vec<&Image> {
+        if self.filter_dangling_images {
+            self.images.iter().filter(|i| i.is_dangling()).collect()
+        } else {
+            self.images.iter().collect()
         }
     }
 
@@ -198,7 +214,7 @@ impl App {
         match tab {
             Tab::Running => self.running.len(),
             Tab::Stopped => self.stopped.len(),
-            Tab::Images => self.images.len(),
+            Tab::Images => self.get_filtered_images().len(),
             Tab::Volumes => self.volumes.len(),
             Tab::Networks => self.networks.len(),
             Tab::Pods => self.pods.len(),
@@ -219,7 +235,7 @@ impl App {
                     .map(|c| (self.active_tab.clone(), c.engine.clone(), c.id.clone()))
             }
             Tab::Images => self
-                .images
+                .get_filtered_images()
                 .get(self.selected_index)
                 .map(|i| (Tab::Images, i.engine.clone(), i.id.clone())),
             Tab::Volumes => self
@@ -395,6 +411,13 @@ impl App {
                 self.inspect_popup = Some(output);
                 self.inspect_scroll = 0;
             }
+            Action::ImageHistoryRefreshed { history } => {
+                self.image_history = history;
+            }
+            Action::PruneComplete { message } => {
+                self.status_message = Some(message);
+                dispatcher::trigger_refresh_data(self);
+            }
             Action::PullComplete => {
                 self.is_pulling = false;
                 self.direct_pull_form = None;
@@ -452,6 +475,7 @@ mod tests {
                 names: None,
                 size: Some(serde_json::json!(5000)),
                 created: Some(serde_json::Value::Number(1_678_901_234.into())),
+                dangling: None,
                 engine: "mock".into(),
             }])
         }
@@ -537,6 +561,15 @@ mod tests {
         async fn configure_registries(&self, _registries_csv: &str) -> Result<()> {
             Ok(())
         }
+        async fn prune_images(&self, _engines: &[String], _all: bool) -> Result<String> {
+            Ok("Pruned 0 B".into())
+        }
+        async fn tag_image(&self, _engine: &str, _image_id: &str, _target_tag: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn get_image_history(&self, _engine: &str, _image_id: &str) -> Result<Vec<String>> {
+            Ok(vec!["LAYER 1 (10MB)".into(), "LAYER 2 (5MB)".into()])
+        }
     }
 
     #[test]
@@ -545,6 +578,54 @@ mod tests {
         assert_eq!(app.active_tab, Tab::Running);
         assert!(!app.should_quit);
         assert_eq!(app.engine_view, EngineView::Both);
+        assert!(!app.filter_dangling_images);
+        assert!(app.tag_image_form.is_none());
+        assert!(app.image_history.is_empty());
+    }
+
+    #[test]
+    fn test_dangling_filter_and_tagging() {
+        let mut app = App::new();
+        let tagged = Image {
+            id: "img1".into(),
+            parent_id: None,
+            repo_tags: Some(serde_json::json!(["alpine:latest"])),
+            repository: Some("alpine".into()),
+            tag: Some("latest".into()),
+            names: None,
+            size: None,
+            created: None,
+            dangling: None,
+            engine: "podman".into(),
+        };
+        let dangling = Image {
+            id: "img2".into(),
+            parent_id: None,
+            repo_tags: None,
+            repository: None,
+            tag: None,
+            names: Some(serde_json::json!(["<none>:<none>"])),
+            size: None,
+            created: None,
+            dangling: None,
+            engine: "podman".into(),
+        };
+
+        app.images = vec![tagged, dangling];
+        assert_eq!(app.get_filtered_images().len(), 2);
+        assert_eq!(app.get_list_len_for_tab(&Tab::Images), 2);
+
+        app.filter_dangling_images = true;
+        assert_eq!(app.get_filtered_images().len(), 1);
+        assert_eq!(app.get_list_len_for_tab(&Tab::Images), 1);
+        assert_eq!(app.get_filtered_images()[0].id, "img2");
+
+        app.active_tab = Tab::Images;
+        app.selected_index = 0;
+        assert_eq!(
+            app.get_selected_resource(),
+            Some((Tab::Images, "podman".into(), "img2".into()))
+        );
     }
 
     #[tokio::test]

@@ -25,6 +25,12 @@ pub enum Action {
     InspectResult {
         output: String,
     },
+    ImageHistoryRefreshed {
+        history: Vec<String>,
+    },
+    PruneComplete {
+        message: String,
+    },
     PullComplete,
     ActionComplete,
     Error {

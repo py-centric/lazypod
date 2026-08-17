@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::app::dispatcher;
 use crate::app::forms::{
     ConfigureRegistriesForm, CreateContainerForm, CreatePodForm, DirectPullForm, ExecForm,
-    SearchImageForm,
+    SearchImageForm, TagImageForm,
 };
 use crate::app::{App, Tab};
 
@@ -56,6 +56,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     // 8. Create container form keys
     if app.create_container_form.is_some() {
         handle_create_container_keys(app, key.code);
+        return;
+    }
+
+    // 8b. Tag image form keys
+    if app.tag_image_form.is_some() {
+        handle_tag_image_keys(app, key.code);
         return;
     }
 
@@ -287,28 +293,60 @@ fn handle_create_container_keys(app: &mut App, code: KeyCode) {
     }
 }
 
+fn handle_tag_image_keys(app: &mut App, code: KeyCode) {
+    if let Some(form) = &mut app.tag_image_form {
+        match code {
+            KeyCode::Esc => {
+                app.tag_image_form = None;
+            }
+            KeyCode::Enter => {
+                dispatcher::submit_tag_image(app);
+            }
+            KeyCode::Backspace => {
+                form.target_tag.pop();
+            }
+            KeyCode::Char(c) => {
+                form.target_tag.push(c);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn handle_confirmation_keys(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Char('y') | KeyCode::Enter => {
             app.show_confirmation = false;
             if let Some((resource_type, engine, id, action)) = app.pending_action.take() {
-                dispatcher::execute_resource_action(app, resource_type, engine, id, action);
+                if action == "prune_dangling" {
+                    dispatcher::trigger_prune_images(app, false);
+                } else if action == "prune_all" {
+                    dispatcher::trigger_prune_images(app, true);
+                } else {
+                    dispatcher::execute_resource_action(app, resource_type, engine, id, action);
+                }
             }
         }
         KeyCode::Char('a') => {
             app.show_confirmation = false;
             if let Some((resource_type, engine, id, action)) = app.pending_action.take() {
-                let related = app.get_related_resources(&resource_type, &id);
-                for (r_type, r_engine, r_id) in related {
-                    dispatcher::execute_resource_action(
-                        app,
-                        r_type,
-                        r_engine,
-                        r_id,
-                        action.clone(),
-                    );
+                if action == "prune_dangling" {
+                    dispatcher::trigger_prune_images(app, false);
+                } else if action == "prune_all" {
+                    dispatcher::trigger_prune_images(app, true);
+                } else {
+                    let related = app.get_related_resources(&resource_type, &id);
+                    for (r_type, r_engine, r_id) in related {
+                        dispatcher::execute_resource_action(
+                            app,
+                            r_type,
+                            r_engine,
+                            r_id,
+                            action.clone(),
+                        );
+                    }
+                    dispatcher::execute_resource_action(app, resource_type, engine, id, action);
                 }
-                dispatcher::execute_resource_action(app, resource_type, engine, id, action);
             }
         }
         KeyCode::Char('n') | KeyCode::Esc => {
@@ -435,9 +473,44 @@ fn handle_main_keys(app: &mut App, code: KeyCode) {
                 app.direct_pull_form = Some(DirectPullForm::default());
             }
         }
-        KeyCode::Char('P') => {
-            if matches!(app.active_tab, Tab::Pods) {
+        KeyCode::Char('P') => match app.active_tab {
+            Tab::Pods => {
                 app.create_pod_form = Some(CreatePodForm::default());
+            }
+            Tab::Images => {
+                app.pending_action = Some((
+                    Tab::Images,
+                    "all".into(),
+                    "dangling".into(),
+                    "prune_dangling".into(),
+                ));
+                app.show_confirmation = true;
+            }
+            _ => {}
+        },
+        KeyCode::Char('X') => {
+            if matches!(app.active_tab, Tab::Images) {
+                app.pending_action = Some((
+                    Tab::Images,
+                    "all".into(),
+                    "all_unused".into(),
+                    "prune_all".into(),
+                ));
+                app.show_confirmation = true;
+            }
+        }
+        KeyCode::Char('f' | 'F') => {
+            if matches!(app.active_tab, Tab::Images) {
+                app.filter_dangling_images = !app.filter_dangling_images;
+                app.selected_index = 0;
+                dispatcher::trigger_fetch_logs(app);
+            }
+        }
+        KeyCode::Char('t') => {
+            if matches!(app.active_tab, Tab::Images)
+                && app.get_filtered_images().get(app.selected_index).is_some()
+            {
+                app.tag_image_form = Some(TagImageForm::default());
             }
         }
         KeyCode::Char('c') => {
@@ -492,7 +565,7 @@ fn handle_primary_action(app: &mut App) {
                     .select(Some(app.container_logs.len().saturating_sub(1)));
             }
         }
-        Tab::Images if app.images.get(app.selected_index).is_some() => {
+        Tab::Images if app.get_filtered_images().get(app.selected_index).is_some() => {
             app.create_container_form = Some(CreateContainerForm::default());
         }
         _ => {}

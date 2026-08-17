@@ -104,8 +104,13 @@ pub fn trigger_refresh_data(app: &mut App) {
     });
 }
 
-/// Fetch logs for the currently selected container or pod.
+/// Fetch logs for the currently selected container or pod, or image history if on images tab.
 pub fn trigger_fetch_logs(app: &mut App) {
+    if matches!(app.active_tab, Tab::Images) {
+        trigger_fetch_image_history(app);
+        return;
+    }
+
     let (engine, id, is_pod) = match app.active_tab {
         Tab::Running => {
             if let Some(c) = app.running.get(app.selected_index) {
@@ -150,6 +155,27 @@ pub fn trigger_fetch_logs(app: &mut App) {
     } else {
         app.container_logs.clear();
         app.logs_state.select(None);
+    }
+}
+
+/// Fetch layer history for the currently selected image.
+pub fn trigger_fetch_image_history(app: &mut App) {
+    if let Some(img) = app.get_filtered_images().get(app.selected_index) {
+        let engine = img.engine.clone();
+        let id = img.id.clone();
+        let client = app.engine_client.clone();
+        let tx = app.action_tx.clone();
+        tokio::spawn(async move {
+            let history = client
+                .get_image_history(&engine, &id)
+                .await
+                .unwrap_or_default();
+            if let Some(tx) = tx {
+                let _ = tx.send(Action::ImageHistoryRefreshed { history });
+            }
+        });
+    } else {
+        app.image_history.clear();
     }
 }
 
@@ -344,4 +370,57 @@ pub fn configure_registries(app: &mut App, registries: String) {
         }
     });
     app.configure_registries_form = None;
+}
+
+/// Prune images task (dangling only or all unused).
+pub fn trigger_prune_images(app: &App, all: bool) {
+    let engines = app.get_active_engines();
+    let client = app.engine_client.clone();
+    let tx = app.action_tx.clone();
+    tokio::spawn(async move {
+        let result = client.prune_images(&engines, all).await;
+        if let Some(tx) = tx {
+            match result {
+                Ok(msg) => {
+                    let _ = tx.send(Action::PruneComplete { message: msg });
+                }
+                Err(e) => {
+                    let _ = tx.send(Action::Error {
+                        message: e.to_string(),
+                    });
+                }
+            }
+        }
+    });
+}
+
+/// Submit image tagging form.
+pub fn submit_tag_image(app: &mut App) {
+    if let Some(form) = app.tag_image_form.take() {
+        let tag = form.target_tag.trim().to_string();
+        if tag.is_empty() {
+            return;
+        }
+        if let Some(img) = app.get_filtered_images().get(app.selected_index) {
+            let engine = img.engine.clone();
+            let id = img.id.clone();
+            let client = app.engine_client.clone();
+            let tx = app.action_tx.clone();
+            tokio::spawn(async move {
+                let result = client.tag_image(&engine, &id, &tag).await;
+                if let Some(tx) = tx {
+                    match result {
+                        Ok(()) => {
+                            let _ = tx.send(Action::ActionComplete);
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::Error {
+                                message: e.to_string(),
+                            });
+                        }
+                    }
+                }
+            });
+        }
+    }
 }

@@ -41,6 +41,12 @@ pub struct ConfigureRegistriesForm {
     pub registries: String,
 }
 
+/// Form state for image tagging popup.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TagImageForm {
+    pub target_tag: String,
+}
+
 /// Form state for interactive container exec popup.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ExecForm {

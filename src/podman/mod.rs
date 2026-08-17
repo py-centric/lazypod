@@ -26,13 +26,7 @@ pub trait EngineClient: Send + Sync {
         env: &str,
         command: &str,
     ) -> Result<()>;
-    async fn create_pod(
-        &self,
-        engine: &str,
-        name: &str,
-        network: &str,
-        share: &str,
-    ) -> Result<()>;
+    async fn create_pod(&self, engine: &str, name: &str, network: &str, share: &str) -> Result<()>;
     async fn search_images(&self, engines: &[String], term: &str) -> Result<Vec<SearchResult>>;
     async fn pull_image(&self, engine: &str, image: &str) -> Result<()>;
     async fn get_container_logs(&self, engine: &str, id: &str) -> Result<Vec<String>>;
@@ -60,7 +54,7 @@ impl EngineClient for LocalEngines {
                 if out.status.success() {
                     let mut parsed: Vec<Container> = parse_json_output(&out.stdout);
                     for item in &mut parsed {
-                        item.engine = engine.clone();
+                        item.engine.clone_from(engine);
                     }
                     all_containers.extend(parsed);
                 } else {
@@ -86,7 +80,7 @@ impl EngineClient for LocalEngines {
                 if out.status.success() {
                     let mut parsed: Vec<Image> = parse_json_output(&out.stdout);
                     for item in &mut parsed {
-                        item.engine = engine.clone();
+                        item.engine.clone_from(engine);
                     }
                     all_images.extend(parsed);
                 } else {
@@ -112,7 +106,7 @@ impl EngineClient for LocalEngines {
                 if out.status.success() {
                     let mut parsed: Vec<Volume> = parse_json_output(&out.stdout);
                     for item in &mut parsed {
-                        item.engine = engine.clone();
+                        item.engine.clone_from(engine);
                     }
                     all_volumes.extend(parsed);
                 } else {
@@ -138,7 +132,7 @@ impl EngineClient for LocalEngines {
                 if out.status.success() {
                     let mut parsed: Vec<Network> = parse_json_output(&out.stdout);
                     for item in &mut parsed {
-                        item.engine = engine.clone();
+                        item.engine.clone_from(engine);
                     }
                     all_networks.extend(parsed);
                 } else {
@@ -168,7 +162,7 @@ impl EngineClient for LocalEngines {
                 if out.status.success() {
                     let mut parsed: Vec<Pod> = parse_json_output(&out.stdout);
                     for item in &mut parsed {
-                        item.engine = engine.clone();
+                        item.engine.clone_from(engine);
                     }
                     all_pods.extend(parsed);
                 } else {
@@ -186,43 +180,80 @@ impl EngineClient for LocalEngines {
         let output = Command::new(engine).args([action, id]).output().await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to {} container {}: {}", action, id, stderr.trim()));
+            return Err(anyhow::anyhow!(
+                "Failed to {} container {}: {}",
+                action,
+                id,
+                stderr.trim()
+            ));
         }
         Ok(())
     }
 
     async fn action_image(&self, engine: &str, id: &str, action: &str) -> Result<()> {
-        let output = Command::new(engine).args(["image", action, id]).output().await?;
+        let output = Command::new(engine)
+            .args(["image", action, id])
+            .output()
+            .await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to {} image {}: {}", action, id, stderr.trim()));
+            return Err(anyhow::anyhow!(
+                "Failed to {} image {}: {}",
+                action,
+                id,
+                stderr.trim()
+            ));
         }
         Ok(())
     }
 
     async fn action_volume(&self, engine: &str, name: &str, action: &str) -> Result<()> {
-        let output = Command::new(engine).args(["volume", action, name]).output().await?;
+        let output = Command::new(engine)
+            .args(["volume", action, name])
+            .output()
+            .await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to {} volume {}: {}", action, name, stderr.trim()));
+            return Err(anyhow::anyhow!(
+                "Failed to {} volume {}: {}",
+                action,
+                name,
+                stderr.trim()
+            ));
         }
         Ok(())
     }
 
     async fn action_network(&self, engine: &str, id: &str, action: &str) -> Result<()> {
-        let output = Command::new(engine).args(["network", action, id]).output().await?;
+        let output = Command::new(engine)
+            .args(["network", action, id])
+            .output()
+            .await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to {} network {}: {}", action, id, stderr.trim()));
+            return Err(anyhow::anyhow!(
+                "Failed to {} network {}: {}",
+                action,
+                id,
+                stderr.trim()
+            ));
         }
         Ok(())
     }
 
     async fn action_pod(&self, engine: &str, id: &str, action: &str) -> Result<()> {
-        let output = Command::new(engine).args(["pod", action, id]).output().await?;
+        let output = Command::new(engine)
+            .args(["pod", action, id])
+            .output()
+            .await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to {} pod {}: {}", action, id, stderr.trim()));
+            return Err(anyhow::anyhow!(
+                "Failed to {} pod {}: {}",
+                action,
+                id,
+                stderr.trim()
+            ));
         }
         Ok(())
     }
@@ -251,8 +282,14 @@ impl EngineClient for LocalEngines {
 
         let env = env.trim();
         if !env.is_empty() {
-            for e in env.split_whitespace() {
-                cmd.arg("-e").arg(e);
+            if let Some(words) = shlex::split(env) {
+                for e in words {
+                    cmd.arg("-e").arg(e);
+                }
+            } else {
+                for e in env.split_whitespace() {
+                    cmd.arg("-e").arg(e);
+                }
             }
         }
 
@@ -260,25 +297,25 @@ impl EngineClient for LocalEngines {
 
         let command = command.trim();
         if !command.is_empty() {
-            for arg in command.split_whitespace() {
-                cmd.arg(arg);
+            if let Some(words) = shlex::split(command) {
+                for arg in words {
+                    cmd.arg(arg);
+                }
+            } else {
+                for arg in command.split_whitespace() {
+                    cmd.arg(arg);
+                }
             }
         }
 
         let output = cmd.output().await?;
         if !output.status.success() {
-            return Err(anyhow::anyhow!("Failed to run container: {:?}", output));
+            return Err(anyhow::anyhow!("Failed to run container: {output:?}"));
         }
         Ok(())
     }
 
-    async fn create_pod(
-        &self,
-        engine: &str,
-        name: &str,
-        network: &str,
-        share: &str,
-    ) -> Result<()> {
+    async fn create_pod(&self, engine: &str, name: &str, network: &str, share: &str) -> Result<()> {
         let mut cmd = Command::new(engine);
         cmd.arg("pod").arg("create");
 
@@ -367,20 +404,23 @@ impl EngineClient for LocalEngines {
     }
 
     async fn get_container_inspect(&self, engine: &str, id: &str) -> Result<String> {
-        let output = Command::new(engine)
-            .args(["inspect", id])
-            .output()
-            .await?;
+        let output = Command::new(engine).args(["inspect", id]).output().await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to inspect {}: {}", id, stderr.trim()));
+            return Err(anyhow::anyhow!(
+                "Failed to inspect {}: {}",
+                id,
+                stderr.trim()
+            ));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         // Try to pretty-print the JSON
         match serde_json::from_str::<serde_json::Value>(&stdout) {
-            Ok(val) => Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| stdout.to_string())),
+            Ok(val) => {
+                Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| stdout.to_string()))
+            }
             Err(_) => Ok(stdout.to_string()),
         }
     }
@@ -390,12 +430,12 @@ impl EngineClient for LocalEngines {
         tokio::task::spawn_blocking(move || {
             let registry_list: Vec<&str> = registries_csv
                 .split(',')
-                .map(|s| s.trim())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .collect();
             let formatted = registry_list
                 .iter()
-                .map(|s| format!("\"{}\"", s))
+                .map(|s| format!("\"{s}\""))
                 .collect::<Vec<String>>()
                 .join(", ");
 
@@ -404,7 +444,7 @@ impl EngineClient for LocalEngines {
             std::fs::create_dir_all(&containers_dir).ok();
 
             let conf_path = containers_dir.join("registries.conf");
-            let new_line = format!("unqualified-search-registries = [{}]", formatted);
+            let new_line = format!("unqualified-search-registries = [{formatted}]");
 
             let existing_content = std::fs::read_to_string(&conf_path).unwrap_or_default();
             let mut new_lines = Vec::new();
@@ -431,11 +471,13 @@ impl EngineClient for LocalEngines {
             new_lines.push(String::new());
 
             std::fs::write(conf_path, new_lines.join("\n"))
-        }).await??;
+        })
+        .await??;
         Ok(())
     }
 }
 
+#[must_use]
 pub fn parse_json_output<T: serde::de::DeserializeOwned>(stdout: &[u8]) -> Vec<T> {
     if stdout.is_empty() {
         return vec![];
@@ -486,7 +528,7 @@ mod tests {
         let containers: Vec<Container> = parse_json_output(raw_json.as_bytes());
         assert_eq!(containers.len(), 1);
         assert_eq!(containers[0].id, "123");
-        assert_eq!(containers[0].is_running(), true);
+        assert!(containers[0].is_running());
         assert_eq!(containers[0].get_names(), vec!["my_container"]);
         assert_eq!(containers[0].get_command(), "sh");
     }
@@ -589,6 +631,7 @@ mod tests {
         assert!(!c.is_running());
     }
 
+    #[allow(clippy::too_many_lines)]
     #[test]
     fn test_container_get_ports() {
         use crate::podman::models::PortMapping;
@@ -611,12 +654,15 @@ mod tests {
         };
         let ports = c.get_ports();
         assert_eq!(ports.len(), 1);
-        assert_eq!(ports[0], PortMapping {
-            host_ip: "0.0.0.0".into(),
-            host_port: 8080,
-            container_port: 80,
-            protocol: "tcp".into(),
-        });
+        assert_eq!(
+            ports[0],
+            PortMapping {
+                host_ip: "0.0.0.0".into(),
+                host_port: 8080,
+                container_port: 80,
+                protocol: "tcp".into(),
+            }
+        );
 
         // Test string format (Podman-style)
         let c2 = Container {
@@ -634,12 +680,15 @@ mod tests {
         };
         let ports2 = c2.get_ports();
         assert_eq!(ports2.len(), 1);
-        assert_eq!(ports2[0], PortMapping {
-            host_ip: "0.0.0.0".into(),
-            host_port: 8080,
-            container_port: 80,
-            protocol: "tcp".into(),
-        });
+        assert_eq!(
+            ports2[0],
+            PortMapping {
+                host_ip: "0.0.0.0".into(),
+                host_port: 8080,
+                container_port: 80,
+                protocol: "tcp".into(),
+            }
+        );
 
         // Test multiple ports with IPv6
         let c3 = Container {
@@ -651,7 +700,9 @@ mod tests {
             status: None,
             names: None,
             name: None,
-            ports: Some(serde_json::Value::String("0.0.0.0:8080->80/tcp, :::9090->9090/tcp".into())),
+            ports: Some(serde_json::Value::String(
+                "0.0.0.0:8080->80/tcp, :::9090->9090/tcp".into(),
+            )),
             pod_id: None,
             engine: "test".into(),
         };
@@ -697,7 +748,7 @@ mod tests {
 
         // Test get_port_strings convenience
         let strings = c.get_port_strings();
-        assert_eq!(strings, vec!["0.0.0.0:8080->80tcp"]);
+        assert_eq!(strings, vec!["0.0.0.0:8080->80/tcp"]);
     }
 
     #[test]
@@ -710,7 +761,7 @@ mod tests {
             tag: None,
             names: Some(serde_json::Value::String("name1".into())),
             size: Some(100),
-            created: Some(serde_json::Value::Number(1678901234.into())),
+            created: Some(serde_json::Value::Number(1_678_901_234.into())),
             engine: "test".into(),
         };
         let names = img.get_names();

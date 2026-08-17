@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use std::time::{Duration, UNIX_EPOCH};
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PORT MAPPING — unified struct for Docker (JSON array) and Podman (string) ports
+// PORT MAPPING: unified struct for Docker (JSON array) and Podman (string) ports
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// A single port mapping from host → container.
-/// Both Docker and Podman expose the same four-tuple: host_ip, host_port, container_port, protocol.
+/// Both Docker and Podman expose the same four-tuple: `host_ip`, `host_port`, `container_port`, protocol.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PortMapping {
     pub host_ip: String,
@@ -19,34 +19,61 @@ pub struct PortMapping {
 
 impl PortMapping {
     /// Format as "0.0.0.0:8080->80/tcp" (matching `docker ps` display format)
+    #[must_use]
     pub fn display(&self) -> String {
-        if self.host_port > 0 {
-            format!("{}:{}->{}{}", self.host_ip, self.host_port, self.container_port, self.protocol)
+        let proto = if self.protocol.starts_with('/') {
+            self.protocol.clone()
         } else {
-            format!("{}{}", self.container_port, self.protocol)
+            format!("/{}", self.protocol)
+        };
+        if self.host_port > 0 {
+            format!(
+                "{}:{}->{}{}",
+                self.host_ip, self.host_port, self.container_port, proto
+            )
+        } else {
+            format!("{}{}", self.container_port, proto)
         }
     }
 }
 
 /// Parse Docker-style ports: `[{"PrivatePort":80,"PublicPort":8080,"Type":"tcp","IP":"0.0.0.0"}]`
+#[allow(clippy::cast_possible_truncation)]
 fn parse_docker_ports(value: &serde_json::Value) -> Vec<PortMapping> {
     let mut ports = Vec::new();
     if let Some(arr) = value.as_array() {
         for entry in arr {
-            let container_port = match entry.get("PrivatePort").and_then(|p| p.as_u64()) {
+            let container_port = match entry.get("PrivatePort").and_then(serde_json::Value::as_u64)
+            {
                 Some(p) => p as u16,
                 None => continue,
             };
-            let host_port = entry.get("PublicPort").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
-            let protocol = entry.get("Type").and_then(|t| t.as_str()).unwrap_or("tcp").to_string();
-            let host_ip = entry.get("IP").and_then(|i| i.as_str()).unwrap_or("0.0.0.0").to_string();
-            ports.push(PortMapping { host_ip, host_port, container_port, protocol });
+            let host_port = entry
+                .get("PublicPort")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as u16;
+            let protocol = entry
+                .get("Type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("tcp")
+                .to_string();
+            let host_ip = entry
+                .get("IP")
+                .and_then(|i| i.as_str())
+                .unwrap_or("0.0.0.0")
+                .to_string();
+            ports.push(PortMapping {
+                host_ip,
+                host_port,
+                container_port,
+                protocol,
+            });
         }
     }
     ports
 }
 
-/// Parse Podman-style ports string: "0.0.0.0:8080->80/tcp, :::9090->9090/tcp"
+/// Parse Podman-style ports string: "0.0.0.0:8080->80/tcp, `:::9090->9090/tcp`"
 fn parse_podman_ports(s: &str) -> Vec<PortMapping> {
     let mut ports = Vec::new();
     for part in s.split(',') {
@@ -70,16 +97,25 @@ fn parse_podman_ports(s: &str) -> Vec<PortMapping> {
             // left can be "0.0.0.0:8080" or ":::8080" or just "8080"
             let (host_ip, host_port) = if let Some(colon_pos) = left.rfind(':') {
                 let ip = &left[..colon_pos];
-                let port: u16 = left[colon_pos + 1..].parse().unwrap_or(0);
-                let ip = if ip.is_empty() || ip == "::" { "0.0.0.0".to_string() } else { ip.to_string() };
-                (ip, port)
+                let h_port: u16 = left[colon_pos + 1..].parse().unwrap_or(0);
+                let ip = if ip.is_empty() || ip == "::" {
+                    "0.0.0.0".to_string()
+                } else {
+                    ip.to_string()
+                };
+                (ip, h_port)
             } else {
                 ("0.0.0.0".to_string(), left.parse().unwrap_or(0))
             };
 
-            ports.push(PortMapping { host_ip, host_port, container_port, protocol });
+            ports.push(PortMapping {
+                host_ip,
+                host_port,
+                container_port,
+                protocol,
+            });
         } else {
-            // No arrow — exposed-only port like "80/tcp"
+            // No arrow: exposed-only port like "80/tcp"
             let (protocol, port_str) = if let Some(slash_pos) = part.find('/') {
                 (part[slash_pos + 1..].to_string(), &part[..slash_pos])
             } else {
@@ -156,14 +192,22 @@ pub struct Container {
     #[serde(rename = "ports", alias = "Ports", default)]
     pub ports: Option<serde_json::Value>,
     /// Podman adds this field when containers are queried with `podman ps --pod`.
-    /// Docker containers never have a pod_id.
-    #[serde(rename = "podid", alias = "PodID", alias = "PodId", alias = "pod_id", alias = "Pod", default)]
+    /// Docker containers never have a `pod_id`.
+    #[serde(
+        rename = "podid",
+        alias = "PodID",
+        alias = "PodId",
+        alias = "pod_id",
+        alias = "Pod",
+        default
+    )]
     pub pod_id: Option<String>,
     #[serde(skip)]
     pub engine: String,
 }
 
 impl Container {
+    #[must_use]
     pub fn get_names(&self) -> Vec<String> {
         if let Some(n) = &self.name {
             if !n.is_empty() {
@@ -183,6 +227,7 @@ impl Container {
         vec![]
     }
 
+    #[must_use]
     pub fn get_command(&self) -> String {
         if let Some(v) = &self.command {
             if let Some(arr) = v.as_array() {
@@ -198,6 +243,7 @@ impl Container {
         String::new()
     }
 
+    #[must_use]
     pub fn get_state_str(&self) -> String {
         if let Some(s) = &self.state {
             if let Some(st) = s.as_str() {
@@ -207,17 +253,19 @@ impl Container {
         "unknown".into()
     }
 
+    #[must_use]
     pub fn get_status_str(&self) -> String {
         if let Some(s) = &self.status {
             if let Some(st) = s.as_str() {
                 return st.to_string();
             }
         }
-        "".into()
+        String::new()
     }
 
-    /// Parse ports into structured PortMapping values.
+    /// Parse ports into structured `PortMapping` values.
     /// Handles both Docker (JSON array) and Podman (comma-separated string) formats.
+    #[must_use]
     pub fn get_ports(&self) -> Vec<PortMapping> {
         if let Some(v) = &self.ports {
             if v.is_array() {
@@ -230,10 +278,12 @@ impl Container {
     }
 
     /// Convenience: format ports as display strings for UI.
+    #[must_use]
     pub fn get_port_strings(&self) -> Vec<String> {
-        self.get_ports().iter().map(|p| p.display()).collect()
+        self.get_ports().iter().map(PortMapping::display).collect()
     }
 
+    #[must_use]
     pub fn is_running(&self) -> bool {
         let state = self.get_state_str().to_lowercase();
         let status = self.get_status_str().to_lowercase();
@@ -271,11 +321,12 @@ pub struct Image {
 }
 
 impl Image {
+    #[must_use]
     pub fn get_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         if let Some(r) = &self.repository {
             if let Some(t) = &self.tag {
-                names.push(format!("{}:{}", r, t));
+                names.push(format!("{r}:{t}"));
             } else {
                 names.push(r.clone());
             }
@@ -297,6 +348,8 @@ impl Image {
         names
     }
 
+    #[allow(clippy::cast_precision_loss)]
+    #[must_use]
     pub fn get_size_str(&self) -> String {
         let size = self.size.unwrap_or(0);
         if size == 0 {
@@ -312,17 +365,19 @@ impl Image {
         format!("{:.2} {}", size, units[unit_idx])
     }
 
+    #[allow(clippy::cast_sign_loss)]
+    #[must_use]
     pub fn get_created_str(&self) -> String {
         if let Some(v) = &self.created {
             if let Some(n) = v.as_i64() {
-                // Unix timestamp — can be negative for pre-epoch dates (unlikely but defensive)
+                // Unix timestamp: can be negative for pre-epoch dates (unlikely but defensive)
                 if n >= 0 {
                     let d = UNIX_EPOCH + Duration::from_secs(n as u64);
                     let datetime: DateTime<Utc> = d.into();
                     return datetime.format("%Y-%m-%d %H:%M:%S").to_string();
                 }
                 // Negative timestamp: fall through to display raw value
-                return format!("{} (raw)", n);
+                return format!("{n} (raw)");
             } else if let Some(s) = v.as_str() {
                 return s.to_string();
             }
@@ -366,6 +421,7 @@ pub struct PodContainer {
 }
 
 impl PodContainer {
+    #[must_use]
     pub fn get_name(&self) -> String {
         if let Some(v) = &self.names {
             if let Some(arr) = v.as_array() {
@@ -381,12 +437,15 @@ impl PodContainer {
         self.id[..std::cmp::min(12, self.id.len())].to_string()
     }
 
+    #[must_use]
     pub fn get_status_str(&self) -> String {
         self.status.clone().unwrap_or_else(|| "unknown".to_string())
     }
 }
 
 impl Pod {
+    #[allow(clippy::cast_sign_loss)]
+    #[must_use]
     pub fn get_created_str(&self) -> String {
         if let Some(v) = &self.created {
             if let Some(n) = v.as_i64() {
@@ -395,7 +454,7 @@ impl Pod {
                     let datetime: DateTime<Utc> = d.into();
                     return datetime.format("%Y-%m-%d %H:%M:%S").to_string();
                 }
-                return format!("{} (raw)", n);
+                return format!("{n} (raw)");
             } else if let Some(s) = v.as_str() {
                 return s.to_string();
             }
@@ -404,6 +463,7 @@ impl Pod {
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn get_labels_vec(&self) -> Vec<(String, String)> {
         self.labels
             .as_ref()
@@ -413,6 +473,7 @@ impl Pod {
 
     /// True when Podman reports the pod as running.
     #[allow(dead_code)]
+    #[must_use]
     pub fn is_running(&self) -> bool {
         let s = self.status.to_lowercase();
         s.contains("running") || s.contains("up")
@@ -420,13 +481,14 @@ impl Pod {
 
     /// Get all container names from the pod's Containers array.
     #[allow(dead_code)]
+    #[must_use]
     pub fn get_container_names(&self) -> Vec<String> {
-        self.containers.iter().map(|c| c.get_name()).collect()
+        self.containers.iter().map(PodContainer::get_name).collect()
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// INSPECT OUTPUT — simplified extraction from the large `docker/podman inspect` JSON blob
+// INSPECT OUTPUT: simplified extraction from the large `docker/podman inspect` JSON blob
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Simplified view of `docker inspect` / `podman inspect` output.
@@ -480,7 +542,9 @@ pub struct InspectMount {
 
 #[allow(dead_code)]
 impl InspectInfo {
-    /// Parse the raw inspect JSON (Docker or Podman format) into a simplified InspectInfo.
+    /// Parse the raw inspect JSON (Docker or Podman format) into a simplified `InspectInfo`.
+    #[allow(clippy::too_many_lines)]
+    #[must_use]
     pub fn from_inspect_json(raw: &serde_json::Value, engine: &str) -> Self {
         let mut info = InspectInfo {
             engine: engine.to_string(),
@@ -488,17 +552,30 @@ impl InspectInfo {
         };
 
         // Top-level fields
-        info.id = raw.get("Id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        info.name = raw.get("Name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        info.id = raw
+            .get("Id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        info.name = raw
+            .get("Name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         // Docker nests name with leading "/"
         if info.name.starts_with('/') {
             info.name = info.name[1..].to_string();
         }
 
-        info.created = raw.get("Created").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        info.created = raw
+            .get("Created")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-        // Image — Docker: Config.Image, Podman: Image or Config.Image
-        info.image = raw.get("Config")
+        // Image: Docker: Config.Image, Podman: Image or Config.Image
+        info.image = raw
+            .get("Config")
             .and_then(|c| c.get("Image"))
             .and_then(|v| v.as_str())
             .or_else(|| raw.get("Image").and_then(|v| v.as_str()))
@@ -507,38 +584,65 @@ impl InspectInfo {
 
         // State
         if let Some(state) = raw.get("State") {
-            info.state = state.get("Status").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            info.state = state
+                .get("Status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             info.status = format!(
                 "{} (running: {}, pid: {})",
                 info.state,
-                state.get("Running").and_then(|v| v.as_bool()).unwrap_or(false),
-                state.get("Pid").and_then(|v| v.as_i64()).unwrap_or(0),
+                state
+                    .get("Running")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                state
+                    .get("Pid")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0),
             );
         }
 
         // Config section
         if let Some(config) = raw.get("Config") {
-            info.env = config.get("Env")
+            info.env = config
+                .get("Env")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
 
-            info.cmd = config.get("Cmd")
+            info.cmd = config
+                .get("Cmd")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
 
-            info.entrypoint = config.get("Entrypoint")
+            info.entrypoint = config
+                .get("Entrypoint")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
 
-            info.working_dir = config.get("WorkingDir")
+            info.working_dir = config
+                .get("WorkingDir")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
 
-            info.user = config.get("User")
+            info.user = config
+                .get("User")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -546,27 +650,52 @@ impl InspectInfo {
 
         // Network settings
         if let Some(net) = raw.get("NetworkSettings") {
-            info.ip_address = net.get("IPAddress").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            info.mac_address = net.get("MacAddress").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            info.gateway = net.get("Gateway").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            info.ip_address = net
+                .get("IPAddress")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            info.mac_address = net
+                .get("MacAddress")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            info.gateway = net
+                .get("Gateway")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
 
             // Networks
             if let Some(nets) = net.get("Networks").and_then(|v| v.as_object()) {
                 info.networks = nets.keys().cloned().collect();
             }
 
-            // Ports — Docker format (object with nested arrays)
+            // Ports: Docker format (object with nested arrays)
             if let Some(ports_obj) = net.get("Ports").and_then(|v| v.as_object()) {
                 for (container_port_proto, bindings) in ports_obj {
                     let parts: Vec<&str> = container_port_proto.splitn(2, '/').collect();
-                    let container_port: u16 = parts.first().and_then(|p| p.parse().ok()).unwrap_or(0);
+                    let container_port: u16 =
+                        parts.first().and_then(|p| p.parse().ok()).unwrap_or(0);
                     let protocol = parts.get(1).unwrap_or(&"tcp").to_string();
 
                     if let Some(arr) = bindings.as_array() {
                         for binding in arr {
-                            let host_ip = binding.get("HostIp").and_then(|v| v.as_str()).unwrap_or("0.0.0.0").to_string();
-                            let host_port = binding.get("HostPort").and_then(|v| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0);
-                            info.ports.push(PortMapping { host_ip, host_port, container_port, protocol: protocol.clone() });
+                            let host_ip = binding
+                                .get("HostIp")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("0.0.0.0")
+                                .to_string();
+                            let host_port = binding
+                                .get("HostPort")
+                                .and_then(|v| v.as_str().and_then(|s| s.parse().ok()))
+                                .unwrap_or(0);
+                            info.ports.push(PortMapping {
+                                host_ip,
+                                host_port,
+                                container_port,
+                                protocol: protocol.clone(),
+                            });
                         }
                     } else if bindings.is_null() {
                         // Exposed-only port (no host binding)
@@ -583,21 +712,45 @@ impl InspectInfo {
 
         // Mounts
         if let Some(mounts) = raw.get("Mounts").and_then(|v| v.as_array()) {
-            info.mounts = mounts.iter().map(|m| InspectMount {
-                source: m.get("Source").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                destination: m.get("Destination").or_else(|| m.get("Dest")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                mode: m.get("Mode").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                rw: m.get("RW").and_then(|v| v.as_bool()).unwrap_or(true),
-                mount_type: m.get("Type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            }).collect();
+            info.mounts = mounts
+                .iter()
+                .map(|m| InspectMount {
+                    source: m
+                        .get("Source")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    destination: m
+                        .get("Destination")
+                        .or_else(|| m.get("Dest"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    mode: m
+                        .get("Mode")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    rw: m
+                        .get("RW")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(true),
+                    mount_type: m
+                        .get("Type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                })
+                .collect();
         }
 
         // HostConfig resources
         if let Some(hc) = raw.get("HostConfig") {
-            info.memory_limit = hc.get("Memory").and_then(|v| v.as_u64());
-            info.cpu_shares = hc.get("CpuShares").and_then(|v| v.as_u64());
-            info.pids_limit = hc.get("PidsLimit").and_then(|v| v.as_i64());
-            info.restart_policy = hc.get("RestartPolicy")
+            info.memory_limit = hc.get("Memory").and_then(serde_json::Value::as_u64);
+            info.cpu_shares = hc.get("CpuShares").and_then(serde_json::Value::as_u64);
+            info.pids_limit = hc.get("PidsLimit").and_then(serde_json::Value::as_i64);
+            info.restart_policy = hc
+                .get("RestartPolicy")
                 .and_then(|rp| rp.get("Name"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
@@ -608,10 +761,14 @@ impl InspectInfo {
     }
 
     /// Format as a human-readable string for the TUI inspect popup.
+    #[must_use]
     pub fn format_display(&self) -> String {
         let mut lines = Vec::new();
 
-        lines.push(format!("ID:       {}", &self.id[..std::cmp::min(12, self.id.len())]));
+        lines.push(format!(
+            "ID:       {}",
+            &self.id[..std::cmp::min(12, self.id.len())]
+        ));
         lines.push(format!("Name:     {}", self.name));
         lines.push(format!("Image:    {}", self.image));
         lines.push(format!("State:    {}", self.state));
@@ -648,7 +805,7 @@ impl InspectInfo {
             lines.push(String::new());
             lines.push("Networks:".to_string());
             for n in &self.networks {
-                lines.push(format!("  {}", n));
+                lines.push(format!("  {n}"));
             }
         }
         if !self.ip_address.is_empty() {
@@ -660,7 +817,17 @@ impl InspectInfo {
             lines.push(String::new());
             lines.push("Mounts:".to_string());
             for m in &self.mounts {
-                lines.push(format!("  {} -> {} ({}, {})", m.source, m.destination, m.mount_type, if m.mount_type == "bind" || m.rw { "rw" } else { "ro" }));
+                lines.push(format!(
+                    "  {} -> {} ({}, {})",
+                    m.source,
+                    m.destination,
+                    m.mount_type,
+                    if m.mount_type == "bind" || m.rw {
+                        "rw"
+                    } else {
+                        "ro"
+                    }
+                ));
             }
         }
 
@@ -669,7 +836,7 @@ impl InspectInfo {
             lines.push(String::new());
             lines.push(format!("Env ({} vars):", self.env.len()));
             for e in self.env.iter().take(10) {
-                lines.push(format!("  {}", e));
+                lines.push(format!("  {e}"));
             }
             if self.env.len() > 10 {
                 lines.push(format!("  ... and {} more", self.env.len() - 10));
@@ -677,5 +844,97 @@ impl InspectInfo {
         }
 
         lines.join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case("0.0.0.0:8080->80/tcp", "0.0.0.0", 8080, 80, "tcp")]
+    #[case("127.0.0.1:3000->3000/udp", "127.0.0.1", 3000, 3000, "udp")]
+    #[case(":::9090->9090/tcp", "0.0.0.0", 9090, 9090, "tcp")]
+    #[case("80/tcp", "", 0, 80, "tcp")]
+    fn test_parse_port_string(
+        #[case] input: &str,
+        #[case] expected_ip: &str,
+        #[case] expected_host_port: u16,
+        #[case] expected_container_port: u16,
+        #[case] expected_protocol: &str,
+    ) {
+        let ports = parse_podman_ports(input);
+        assert_eq!(ports.len(), 1);
+        let p = &ports[0];
+        assert_eq!(p.host_ip, expected_ip);
+        assert_eq!(p.host_port, expected_host_port);
+        assert_eq!(p.container_port, expected_container_port);
+        assert_eq!(p.protocol, expected_protocol);
+    }
+
+    #[rstest]
+    #[case(Some(500), "500.00 B")]
+    #[case(Some(1024), "1.00 KB")]
+    #[case(Some(1_048_576), "1.00 MB")]
+    #[case(Some(1_073_741_824), "1.00 GB")]
+    #[case(None, "0 B")]
+    fn test_image_size_str(#[case] size: Option<i64>, #[case] expected: &str) {
+        let img = Image {
+            id: "i1".into(),
+            parent_id: None,
+            repo_tags: None,
+            repository: None,
+            tag: None,
+            names: None,
+            size,
+            created: None,
+            engine: "docker".into(),
+        };
+        assert_eq!(img.get_size_str(), expected);
+    }
+
+    #[test]
+    fn test_inspect_info_from_json() {
+        let raw = serde_json::json!({
+            "Id": "abc123def456",
+            "Name": "/my_service",
+            "Created": "2026-01-01T00:00:00Z",
+            "Config": {
+                "Image": "nginx:alpine",
+                "Env": ["PORT=80", "MODE=prod"],
+                "Cmd": ["nginx", "-g", "daemon off;"]
+            },
+            "State": {
+                "Status": "running",
+                "Running": true,
+                "Pid": 1234
+            },
+            "NetworkSettings": {
+                "IPAddress": "172.17.0.2",
+                "Gateway": "172.17.0.1",
+                "Ports": {
+                    "80/tcp": [{
+                        "HostIp": "0.0.0.0",
+                        "HostPort": "8080"
+                    }]
+                }
+            }
+        });
+
+        let info = InspectInfo::from_inspect_json(&raw, "docker");
+        assert_eq!(info.id, "abc123def456");
+        assert_eq!(info.name, "my_service");
+        assert_eq!(info.image, "nginx:alpine");
+        assert_eq!(info.state, "running");
+        assert_eq!(info.ip_address, "172.17.0.2");
+        assert_eq!(info.ports.len(), 1);
+        assert_eq!(info.ports[0].host_port, 8080);
+        assert_eq!(info.ports[0].container_port, 80);
+
+        let rendered = info.format_display();
+        assert!(rendered.contains("my_service"));
+        assert!(rendered.contains("abc123def456"));
+        assert!(rendered.contains("0.0.0.0:8080->80/tcp"));
     }
 }

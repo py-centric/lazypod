@@ -119,8 +119,8 @@ impl EngineClient for LocalEngines {
             let engine = engine.clone();
             handles.push(tokio::spawn(async move {
                 let mut cmd = Command::new(&engine);
-                cmd.args(["images", "-a", "--format", "json"]);
-                let output = run_cmd_with_timeout(cmd, 5000).await;
+                cmd.args(["images", "-a", "--format", "{{json .}}"]);
+                let output = run_cmd_with_timeout(cmd, 10000).await;
                 (engine, output)
             }));
         }
@@ -1005,6 +1005,7 @@ mod tests {
             tag: None,
             names: Some(serde_json::Value::String("name1".into())),
             size: Some(serde_json::json!(100)),
+            virtual_size: None,
             created: Some(serde_json::Value::Number(1_678_901_234.into())),
             dangling: None,
             engine: "test".into(),
@@ -1042,5 +1043,12 @@ mod tests {
         assert_eq!(images.len(), 2);
         assert_eq!(images[0].get_size_str(), "50MB");
         assert_eq!(images[1].get_size_str(), "1.2GB");
+
+        // NDJSON with preamble banner (e.g. docker emulation msg)
+        let img_ndjson_with_banner = b"Emulate Docker CLI using podman.\n{\"repository\":\"alpine\",\"tag\":\"latest\",\"Id\":\"sha256:123\",\"Size\":5000000}\n{\"repository\":\"<none>\",\"tag\":\"<none>\",\"Id\":\"sha256:456\",\"Size\":2000000}\n";
+        let parsed_ndjson: Vec<Image> = parse_json_output(img_ndjson_with_banner);
+        assert_eq!(parsed_ndjson.len(), 2);
+        assert_eq!(parsed_ndjson[0].repository.as_deref(), Some("alpine"));
+        assert!(parsed_ndjson[1].is_dangling());
     }
 }

@@ -312,8 +312,10 @@ pub struct Image {
     pub tag: Option<String>,
     #[serde(rename = "names", alias = "Names", default)]
     pub names: Option<serde_json::Value>,
-    #[serde(rename = "size", alias = "Size", alias = "VirtualSize", default)]
+    #[serde(rename = "size", alias = "Size", default)]
     pub size: Option<serde_json::Value>,
+    #[serde(rename = "virtualSize", alias = "VirtualSize", default)]
+    pub virtual_size: Option<serde_json::Value>,
     #[serde(rename = "created", alias = "Created", default)]
     pub created: Option<serde_json::Value>,
     #[serde(rename = "dangling", alias = "Dangling", default)]
@@ -366,7 +368,8 @@ impl Image {
     #[allow(clippy::cast_precision_loss)]
     #[must_use]
     pub fn get_size_str(&self) -> String {
-        if let Some(v) = &self.size {
+        let val = self.size.as_ref().or(self.virtual_size.as_ref());
+        if let Some(v) = val {
             if let Some(s) = v.as_str() {
                 if !s.is_empty() {
                     return s.to_string();
@@ -912,6 +915,7 @@ mod tests {
             tag: None,
             names: None,
             size,
+            virtual_size: None,
             created: None,
             dangling: None,
             engine: "docker".into(),
@@ -973,6 +977,7 @@ mod tests {
             tag: Some("latest".into()),
             names: None,
             size: None,
+            virtual_size: None,
             created: None,
             dangling: None,
             engine: "podman".into(),
@@ -987,6 +992,7 @@ mod tests {
             tag: None,
             names: Some(serde_json::json!(["<none>:<none>"])),
             size: None,
+            virtual_size: None,
             created: None,
             dangling: None,
             engine: "podman".into(),
@@ -1001,6 +1007,7 @@ mod tests {
             tag: None,
             names: None,
             size: None,
+            virtual_size: None,
             created: None,
             dangling: None,
             engine: "docker".into(),
@@ -1015,10 +1022,52 @@ mod tests {
             tag: None,
             names: Some(serde_json::json!(["some_name"])),
             size: None,
+            virtual_size: None,
             created: None,
             dangling: Some(true),
             engine: "podman".into(),
         };
         assert!(explicit_dangling.is_dangling());
+    }
+
+    #[test]
+    fn test_deserialize_real_image_json() {
+        let json_str = r#"{
+  "repository": "docker.io/library/academisource-ui",
+  "tag": "latest",
+  "Id": "13924a622062b704f1a5975c3bf1dac972bb9eefbb08c1ee6a85ffcb44a5a5f8",
+  "ParentId": "c7bdf8a717c63f6649615ba2aa62891d44b7d1b0e9cc399e55fe7a5a86878b48",
+  "RepoTags": [
+    "docker.io/library/academisource-ui:latest"
+  ],
+  "RepoDigests": [
+    "docker.io/library/academisource-ui@sha256:4c21acfc632119ed6e0eef12bcb45afaa9c0978fd3f2b18bd289cda69974aa5a"
+  ],
+  "Created": 1786971661,
+  "Size": 221929507,
+  "SharedSize": 0,
+  "VirtualSize": 221929507,
+  "Labels": {
+    "com.docker.compose.image.builder": "classic",
+    "io.buildah.version": "1.45.0",
+    "maintainer": "NGINX Docker Maintainers <docker-maint@nginx.com>"
+  },
+  "Containers": 1,
+  "Digest": "sha256:4c21acfc632119ed6e0eef12bcb45afaa9c0978fd3f2b18bd289cda69974aa5a",
+  "History": [
+    "docker.io/library/academisource-ui:latest"
+  ],
+  "Names": [
+    "docker.io/library/academisource-ui:latest"
+  ]
+}"#;
+        let res: Result<Image, _> = serde_json::from_str(json_str);
+        println!("Deserialization result: {res:?}");
+        assert!(res.is_ok());
+        let img = res.unwrap();
+        assert_eq!(
+            img.id,
+            "13924a622062b704f1a5975c3bf1dac972bb9eefbb08c1ee6a85ffcb44a5a5f8"
+        );
     }
 }

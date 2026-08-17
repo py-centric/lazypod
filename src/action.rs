@@ -1,5 +1,5 @@
-use crossterm::event::{KeyEvent, MouseEvent};
 use crate::podman::{Container, Image, Network, Pod, SearchResult, Volume};
+use crossterm::event::{KeyEvent, MouseEvent};
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::enum_variant_names)]

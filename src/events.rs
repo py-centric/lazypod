@@ -12,6 +12,7 @@ pub struct EventHandler {
 }
 
 impl EventHandler {
+    #[must_use]
     pub fn new(tick_rate: u64) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         let sender_clone = sender.clone();
@@ -26,33 +27,21 @@ impl EventHandler {
                     .checked_sub(last_tick.elapsed())
                     .unwrap_or(Duration::from_millis(0));
 
-                match event::poll(timeout) {
-                    Ok(true) => {
-                        match event::read() {
-                            Ok(CrosstermEvent::Key(key)) => {
-                                if key.code == KeyCode::Char('c')
-                                    && key.modifiers.contains(KeyModifiers::CONTROL)
-                                {
-                                    let _ = sender_clone.send(Action::Quit);
-                                    break;
-                                } else {
-                                    let _ = sender_clone.send(Action::Key(key));
-                                }
+                if let Ok(true) = event::poll(timeout) {
+                    match event::read() {
+                        Ok(CrosstermEvent::Key(key)) => {
+                            if key.code == KeyCode::Char('c')
+                                && key.modifiers.contains(KeyModifiers::CONTROL)
+                            {
+                                let _ = sender_clone.send(Action::Quit);
+                                break;
                             }
-                            Ok(CrosstermEvent::Mouse(mouse)) => {
-                                let _ = sender_clone.send(Action::Mouse(mouse));
-                            }
-                            Err(_) => {
-                                // Error reading event, continue polling
-                            }
-                            _ => {}
+                            let _ = sender_clone.send(Action::Key(key));
                         }
-                    }
-                    Ok(false) => {
-                        // Timeout, no event available
-                    }
-                    Err(_) => {
-                        // Error polling, continue loop
+                        Ok(CrosstermEvent::Mouse(mouse)) => {
+                            let _ = sender_clone.send(Action::Mouse(mouse));
+                        }
+                        _ => {}
                     }
                 }
 

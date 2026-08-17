@@ -16,24 +16,27 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Lazypod. If not, see <https://www.gnu.org/licenses/>.
 
-mod action;
-mod app;
-mod events;
-mod podman;
-mod ui;
-
 use anyhow::Result;
-use app::App;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
+use lazypod::app::App;
 use ratatui::prelude::{CrosstermBackend, Terminal};
 use std::io::stdout;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Setup file-based or silent tracing subscriber to prevent console output corruption
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(tracing::Level::INFO.into()),
+        )
+        .with_writer(std::io::stderr)
+        .try_init();
+
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     stdout().execute(EnableMouseCapture)?;
@@ -46,9 +49,10 @@ async fn main() -> Result<()> {
     stdout().execute(LeaveAlternateScreen)?;
     stdout().execute(DisableMouseCapture)?;
 
-    if let Err(err) = res {
-        println!("{:?}", err);
+    if let Err(ref err) = res {
+        tracing::error!("Application error: {err:?}");
+        eprintln!("Application error: {err:?}");
     }
 
-    Ok(())
+    res
 }

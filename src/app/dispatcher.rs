@@ -7,6 +7,8 @@ pub fn trigger_refresh_data(app: &mut App) {
     let client = app.engine_client.clone();
     let tx = app.action_tx.clone();
 
+    tracing::debug!("Triggering data refresh for engines: {engines:?}");
+
     tokio::spawn(async move {
         let (containers_res, images_res, volumes_res, networks_res, pods_res) = tokio::join!(
             client.get_containers(&engines),
@@ -78,6 +80,16 @@ pub fn trigger_refresh_data(app: &mut App) {
                 Vec::new()
             }
         };
+
+        tracing::debug!(
+            "DataRefreshed: {} running, {} stopped, {} images, {} volumes, {} networks, {} pods",
+            running.len(),
+            stopped.len(),
+            images.len(),
+            volumes.len(),
+            networks.len(),
+            pods.len()
+        );
 
         if let Some(tx) = tx {
             let _ = tx.send(Action::DataRefreshed {

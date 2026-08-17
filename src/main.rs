@@ -28,14 +28,31 @@ use std::io::stdout;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Setup file-based or silent tracing subscriber to prevent console output corruption
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
-        .with_writer(std::io::stderr)
-        .try_init();
+    // Setup file-based or stderr tracing subscriber
+    if let Ok(log_path) = std::env::var("LAZYPOD_LOG_FILE") {
+        if let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::from_default_env()
+                        .add_directive(tracing::Level::DEBUG.into()),
+                )
+                .with_writer(file)
+                .with_ansi(false)
+                .try_init();
+        }
+    } else {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::from_default_env()
+                    .add_directive(tracing::Level::INFO.into()),
+            )
+            .with_writer(std::io::stderr)
+            .try_init();
+    }
 
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;

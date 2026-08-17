@@ -83,6 +83,7 @@ impl EngineClient for LocalEngines {
                 Ok(out) => {
                     if out.status.success() {
                         let mut parsed: Vec<Container> = parse_json_output(&out.stdout);
+                        tracing::debug!("{engine} ps returned {} containers", parsed.len());
                         for item in &mut parsed {
                             item.engine.clone_from(&engine);
                         }
@@ -136,6 +137,7 @@ impl EngineClient for LocalEngines {
                 Ok(out) => {
                     if out.status.success() {
                         let mut parsed: Vec<Image> = parse_json_output(&out.stdout);
+                        tracing::debug!("{engine} images returned {} images", parsed.len());
                         for item in &mut parsed {
                             item.engine.clone_from(&engine);
                         }
@@ -189,6 +191,7 @@ impl EngineClient for LocalEngines {
                 Ok(out) => {
                     if out.status.success() {
                         let mut parsed: Vec<Volume> = parse_json_output(&out.stdout);
+                        tracing::debug!("{engine} volume ls returned {} volumes", parsed.len());
                         for item in &mut parsed {
                             item.engine.clone_from(&engine);
                         }
@@ -242,6 +245,7 @@ impl EngineClient for LocalEngines {
                 Ok(out) => {
                     if out.status.success() {
                         let mut parsed: Vec<Network> = parse_json_output(&out.stdout);
+                        tracing::debug!("{engine} network ls returned {} networks", parsed.len());
                         for item in &mut parsed {
                             item.engine.clone_from(&engine);
                         }
@@ -308,6 +312,7 @@ impl EngineClient for LocalEngines {
                 Ok(out) => {
                     if out.status.success() {
                         let mut parsed: Vec<Pod> = parse_json_output(&out.stdout);
+                        tracing::debug!("{engine} pod ps returned {} pods", parsed.len());
                         for item in &mut parsed {
                             item.engine.clone_from(&engine);
                         }

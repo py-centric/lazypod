@@ -301,7 +301,13 @@ impl App {
             terminal.draw(|f| ui::draw(f, self))?;
 
             if let Some(action) = events.next().await {
-                self.update(action);
+                if action == Action::Redraw {
+                    // Reset the buffer diff state so the next draw re-emits
+                    // every cell instead of only changes.
+                    terminal.clear()?;
+                } else {
+                    self.update(action);
+                }
             }
 
             if let Some((engine, cmd)) = self.pending_exec.take() {
@@ -355,7 +361,8 @@ impl App {
             Action::Quit => {
                 self.should_quit = true;
             }
-            Action::Tick => (),
+            // Redraw is intercepted in `run` (it needs terminal access).
+            Action::Tick | Action::Redraw => (),
             Action::DataRefreshed {
                 running,
                 stopped,

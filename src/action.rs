@@ -6,6 +6,7 @@ use crossterm::event::{KeyEvent, MouseEvent};
 pub enum Action {
     Tick,
     Quit,
+    Redraw,
     Key(KeyEvent),
     Mouse(MouseEvent),
     DataRefreshed {

@@ -41,6 +41,17 @@ impl EventHandler {
                         Ok(CrosstermEvent::Mouse(mouse)) => {
                             let _ = sender_clone.send(Action::Mouse(mouse));
                         }
+                        // Window-manager events must force a full repaint:
+                        // ratatui otherwise only flushes buffer diffs, so a
+                        // frame lost while the window was unfocused/mapped is
+                        // never restored on its own.
+                        Ok(
+                            CrosstermEvent::Resize(_, _)
+                            | CrosstermEvent::FocusGained
+                            | CrosstermEvent::FocusLost,
+                        ) => {
+                            let _ = sender_clone.send(Action::Redraw);
+                        }
                         _ => {}
                     }
                 }

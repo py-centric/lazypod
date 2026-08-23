@@ -28,31 +28,7 @@ use std::io::stdout;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Setup file-based or stderr tracing subscriber
-    if let Ok(log_path) = std::env::var("LAZYPOD_LOG_FILE") {
-        if let Ok(file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-        {
-            let _ = tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::from_default_env()
-                        .add_directive(tracing::Level::DEBUG.into()),
-                )
-                .with_writer(file)
-                .with_ansi(false)
-                .try_init();
-        }
-    } else {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::from_default_env()
-                    .add_directive(tracing::Level::INFO.into()),
-            )
-            .with_writer(std::io::stderr)
-            .try_init();
-    }
+    init_tracing();
 
     // Detect container engines before entering the alternate screen: these
     // probes block on subprocesses, and doing so after switching screens
@@ -77,4 +53,56 @@ async fn main() -> Result<()> {
     }
 
     res
+}
+
+/// Initialize tracing without corrupting the TUI.
+///
+/// While the alternate screen is active, any write to stdout or a TTY-bound
+/// stderr lands mid-frame and ratatui's diff renderer never repaints those
+/// cells, leaving garbage across the UI. Logs therefore go to
+/// `LAZYPOD_LOG_FILE` when set; otherwise to stderr only if it has been
+/// redirected away from the terminal; otherwise to a temp file.
+fn init_tracing() {
+    use crossterm::tty::IsTty;
+
+    let filter = |level: tracing::Level| {
+        tracing_subscriber::EnvFilter::from_default_env().add_directive(level.into())
+    };
+
+    if let Ok(log_path) = std::env::var("LAZYPOD_LOG_FILE") {
+        if let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(filter(tracing::Level::DEBUG))
+                .with_writer(file)
+                .with_ansi(false)
+                .try_init();
+        }
+        return;
+    }
+
+    if !std::io::stderr().is_tty() {
+        // stderr was redirected (pipe/file/journal): safe to stream there.
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter(tracing::Level::INFO))
+            .with_writer(std::io::stderr)
+            .try_init();
+        return;
+    }
+
+    let fallback = std::env::temp_dir().join("lazypod.log");
+    if let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&fallback)
+    {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter(tracing::Level::DEBUG))
+            .with_writer(file)
+            .with_ansi(false)
+            .try_init();
+    }
 }

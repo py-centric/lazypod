@@ -54,12 +54,17 @@ async fn main() -> Result<()> {
             .try_init();
     }
 
+    // Detect container engines before entering the alternate screen: these
+    // probes block on subprocesses, and doing so after switching screens
+    // leaves a blank terminal window that garbles the first rendered frame.
+    let mut app = App::new();
+
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     stdout().execute(EnableMouseCapture)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+    terminal.clear()?;
 
-    let mut app = App::new();
     let res = app.run(&mut terminal).await;
 
     disable_raw_mode()?;
